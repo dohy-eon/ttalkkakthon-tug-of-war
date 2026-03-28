@@ -51,22 +51,7 @@ function App() {
   const [duelFever, setDuelFever] = useState(false);
   const [duelWinner, setDuelWinner] = useState('');
   const [duelReason, setDuelReason] = useState('');
-  const [duelMode, setDuelMode] = useState('duel');
-  const [honorImageDataUrl, setHonorImageDataUrl] = useState('');
-  const [shameImageDataUrl, setShameImageDataUrl] = useState('');
-  const [fameConsent, setFameConsent] = useState(false);
-  const [honorStatus, setHonorStatus] = useState('');
-  const [shameStatus, setShameStatus] = useState('');
-  const [honorSubmitting, setHonorSubmitting] = useState(false);
-  const [shameSubmitting, setShameSubmitting] = useState(false);
 
-  const [ranking, setRanking] = useState([]);
-  const [rankResult, setRankResult] = useState(null);
-  const [dailyRankResult, setDailyRankResult] = useState(null);
-  const [rankingScope, setRankingScope] = useState('all');
-  const [rankingNameQuery, setRankingNameQuery] = useState('');
-  const [rankingScoreMin, setRankingScoreMin] = useState('');
-  const [rankingScoreMax, setRankingScoreMax] = useState('');
   const [hallHonor, setHallHonor] = useState([]);
   const [hallShame, setHallShame] = useState([]);
   const [soloCountdown, setSoloCountdown] = useState(3);
@@ -116,8 +101,6 @@ function App() {
   const judgeClearTimeoutRef = useRef(null);
   const perfectFxTimeoutRef = useRef(null);
   const comboRushTimeoutRef = useRef(null);
-  const honorCaptureInputRef = useRef(null);
-  const shameCaptureInputRef = useRef(null);
   const pullComboRef = useRef(0);
   const soloStatsRef = useRef({
     score: 0,
@@ -208,11 +191,6 @@ function App() {
       setDuelReason('');
       setDuelTimeLeftMs(30000);
       setDuelFever(false);
-      setHonorImageDataUrl('');
-      setShameImageDataUrl('');
-      setHonorStatus('');
-      setShameStatus('');
-      setFameConsent(false);
       updateComboFx(0);
       setScreen('duel_play');
     });
@@ -599,20 +577,13 @@ function App() {
     });
 
     try {
-      socket.emit(
-        'submit_solo_result',
-        {
-          nickname: nickname.trim(),
-          score: stats.score,
-          maxCombo: stats.maxCombo,
-          accuracy: Number(avgAccuracy.toFixed(1)),
-          feverScore: stats.feverScore,
-        },
-        (res) => {
-          if (res?.rank) setRankResult(res.rank);
-          if (res?.dailyRank) setDailyRankResult(res.dailyRank);
-        }
-      );
+      socket.emit('submit_solo_result', {
+        nickname: nickname.trim(),
+        score: stats.score,
+        maxCombo: stats.maxCombo,
+        accuracy: Number(avgAccuracy.toFixed(1)),
+        feverScore: stats.feverScore,
+      });
     } catch {
       // no-op
     }
@@ -727,7 +698,6 @@ function App() {
       }
       setError('');
       setTeam(res.team);
-      setDuelMode(res.mode || 'duel');
       beginSensorFlow('duel');
     });
   };
@@ -742,28 +712,6 @@ function App() {
     beginSensorFlow('solo');
   };
 
-  const fetchRanking = (overrides = {}) => {
-    const scope = overrides.scope ?? rankingScope;
-    const nicknameQuery = overrides.nicknameQuery ?? rankingNameQuery;
-    const scoreMin = overrides.scoreMin ?? rankingScoreMin;
-    const scoreMax = overrides.scoreMax ?? rankingScoreMax;
-    const socket = ensureSocket();
-    socket.emit(
-      'get_solo_ranking',
-      {
-        scope,
-        nicknameQuery,
-        scoreMin,
-        scoreMax,
-      },
-      (res) => {
-      setRanking(res?.top || []);
-        setRankingScope(res?.scope || scope);
-      setScreen('ranking');
-      }
-    );
-  };
-
   const fetchHallRecords = () => {
     const socket = ensureSocket();
     socket.emit('get_fame_records', { type: 'honor', limit: 24 }, (res) => {
@@ -773,88 +721,6 @@ function App() {
     socket.emit('get_fame_records', { type: 'shame', limit: 24 }, (res) => {
       setHallShame(res?.records || []);
     });
-  };
-
-  const submitFameRecord = (type, imageDataUrl) =>
-    new Promise((resolve) => {
-      if (!imageDataUrl) {
-        if (type === 'honor') setHonorStatus('사진을 먼저 촬영해주세요.');
-        else setShameStatus('사진을 먼저 촬영해주세요.');
-        resolve({ error: 'no_image' });
-        return;
-      }
-      if (type === 'shame' && !fameConsent) {
-        setShameStatus('불명예의 전당 등록은 동의가 필요합니다.');
-        resolve({ error: 'consent_required' });
-        return;
-      }
-
-      if (type === 'honor') setHonorSubmitting(true);
-      else setShameSubmitting(true);
-
-      ensureSocket().emit(
-        'submit_fame_record',
-        {
-          type,
-          mode: duelMode,
-          displayName: nickname.trim(),
-          imageDataUrl,
-        },
-        (res) => {
-          if (type === 'honor') {
-            setHonorSubmitting(false);
-            setHonorStatus(res?.error ? res.error : '명예의 전당 등록 완료!');
-          } else {
-            setShameSubmitting(false);
-            setShameStatus(res?.error ? res.error : '불명예의 전당 등록 완료!');
-          }
-          resolve(res || {});
-        }
-      );
-    });
-
-  const onFameImageChange = (type) => async (event) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      if (type === 'honor') setHonorStatus('사진 파일만 사용할 수 있습니다.');
-      else setShameStatus('사진 파일만 사용할 수 있습니다.');
-      return;
-    }
-    if (file.size > 1_000_000) {
-      if (type === 'honor') setHonorStatus('이미지 용량은 1MB 이하를 권장합니다.');
-      else setShameStatus('이미지 용량은 1MB 이하를 권장합니다.');
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const dataUrl = String(reader.result || '');
-      if (type === 'honor') {
-        setHonorImageDataUrl(dataUrl);
-        setHonorStatus('등록 중...');
-      } else {
-        setShameImageDataUrl(dataUrl);
-        setShameStatus('등록 중...');
-      }
-      await submitFameRecord(type, dataUrl);
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const openFameCamera = (type) => {
-    if (type === 'honor') {
-      setHonorStatus('');
-      honorCaptureInputRef.current?.click();
-      return;
-    }
-    if (!fameConsent) {
-      setShameStatus('불명예의 전당 등록 동의를 먼저 체크해주세요.');
-      return;
-    }
-    setShameStatus('');
-    shameCaptureInputRef.current?.click();
   };
 
   const leaveDuelSession = () => {
@@ -867,14 +733,6 @@ function App() {
     setPlayers([]);
     setDuelWinner('');
     setDuelReason('');
-    setDuelMode('duel');
-    setHonorImageDataUrl('');
-    setShameImageDataUrl('');
-    setFameConsent(false);
-    setHonorStatus('');
-    setShameStatus('');
-    setHonorSubmitting(false);
-    setShameSubmitting(false);
     setScreen('duel_join');
   };
 
@@ -915,7 +773,6 @@ function App() {
           <button className="btn-primary" onClick={screen === 'duel_join' ? joinDuel : startSolo}>
             {screen === 'duel_join' ? '참가하기' : '시작하기'}
           </button>
-          <button className="btn-secondary" onClick={fetchRanking}>랭킹 보기</button>
           <button className="btn-secondary" onClick={fetchHallRecords}>전당 보기</button>
           <p className="subtitle">모드 선택은 PC에서 진행됩니다.</p>
           {screen === 'solo_join' && <p className="subtitle">1인 모드는 PC 링크/QR로 진입할 수 있습니다.</p>}
@@ -1032,58 +889,19 @@ function App() {
     const isDraw = duelWinner === 'DRAW';
     return (
       <div className="container">
-        <h2 className="result">?</h2>
+        <h2 className="result">{isDraw ? '무승부' : `TEAM ${duelWinner} 승리!`}</h2>
         <p className="subtitle">종료 사유: {duelReason || 'normal'}</p>
         <div className="card list">
+          <p className="subtitle">플레이어 기여도</p>
           {players.map((p) => (
             <div key={p.socketId} className="list-item">
-              <span>{p.name}</span>
+              <span>
+                {p.name} (Team {p.team})
+              </span>
               <span>기여도 {p.contribution}</span>
             </div>
           ))}
         </div>
-        {!isDraw && (
-          <>
-            <div className="card">
-              <p>명예의 전당 촬영 (촬영 후 자동 등록)</p>
-              <input
-                ref={honorCaptureInputRef}
-                className="input file-input"
-                type="file"
-                accept="image/*"
-                capture="environment"
-                onChange={onFameImageChange('honor')}
-                style={{ display: 'none' }}
-              />
-              <button className="btn-secondary" onClick={() => openFameCamera('honor')} disabled={honorSubmitting}>
-                {honorImageDataUrl ? '명예 다시 촬영' : '명예 촬영'}
-              </button>
-              {honorImageDataUrl && <img className="fame-preview" src={honorImageDataUrl} alt="honor preview" />}
-              {honorStatus && <p className="subtitle">{honorStatus}</p>}
-            </div>
-            <div className="card">
-              <p>불명예의 전당 촬영 (촬영 후 자동 등록)</p>
-              <input
-                ref={shameCaptureInputRef}
-                className="input file-input"
-                type="file"
-                accept="image/*"
-                capture="environment"
-                onChange={onFameImageChange('shame')}
-                style={{ display: 'none' }}
-              />
-              <label className="consent-row">
-                <input type="checkbox" checked={fameConsent} onChange={(e) => setFameConsent(e.target.checked)} />
-                <span>불명예의 전당 등록에 동의합니다.</span>
-              </label>
-              <button className="btn-secondary" onClick={() => openFameCamera('shame')} disabled={shameSubmitting}>
-                {shameImageDataUrl ? '불명예 다시 촬영' : '불명예 촬영'}
-              </button>
-              {shameImageDataUrl && <img className="fame-preview" src={shameImageDataUrl} alt="shame preview" />}
-              {shameStatus && <p className="subtitle">{shameStatus}</p>}
-            </div>
-          </>
-        )}
         <div className="form">
           <button className="btn-primary" onClick={leaveDuelSession}>
             메인으로
@@ -1142,8 +960,6 @@ function App() {
           <p>최고 콤보: {soloMaxCombo}</p>
           <p>평균 정확도: {soloAccuracy}%</p>
           <p>피버 점수: {soloFeverScore}</p>
-          {rankResult && <p>이번 기록 순위: {rankResult}위</p>}
-          {dailyRankResult && <p>오늘 순위: {dailyRankResult}위</p>}
         </div>
         <div className="form">
           <button
@@ -1154,9 +970,6 @@ function App() {
             }}
           >
             다시하기
-          </button>
-          <button className="btn-secondary" onClick={fetchRanking}>
-            랭킹 보기
           </button>
           <button className="btn-secondary" onClick={() => setScreen('duel_join')}>
             메인으로
@@ -1206,78 +1019,7 @@ function App() {
     );
   }
 
-  return (
-    <div className="container">
-      <h2 className="title small">랭킹</h2>
-      <div className="form">
-        <div className="inline-row">
-          <button
-            className={`btn-chip ${rankingScope === 'all' ? 'active' : ''}`}
-            onClick={() => {
-              setRankingScope('all');
-              fetchRanking({ scope: 'all' });
-            }}
-          >
-            전체
-          </button>
-          <button
-            className={`btn-chip ${rankingScope === 'daily' ? 'active' : ''}`}
-            onClick={() => {
-              setRankingScope('daily');
-              fetchRanking({ scope: 'daily' });
-            }}
-          >
-            일간
-          </button>
-        </div>
-        <input
-          className="input"
-          type="text"
-          placeholder="닉네임 검색"
-          value={rankingNameQuery}
-          onChange={(e) => setRankingNameQuery(e.target.value)}
-        />
-        <div className="inline-row">
-          <input
-            className="input"
-            type="number"
-            min="0"
-            placeholder="최소 점수"
-            value={rankingScoreMin}
-            onChange={(e) => setRankingScoreMin(e.target.value)}
-          />
-          <input
-            className="input"
-            type="number"
-            min="0"
-            placeholder="최대 점수"
-            value={rankingScoreMax}
-            onChange={(e) => setRankingScoreMax(e.target.value)}
-          />
-        </div>
-        <button className="btn-primary" onClick={() => fetchRanking()}>
-          검색 적용
-        </button>
-      </div>
-      <div className="card list">
-        {ranking.length === 0 && <p>기록이 없습니다.</p>}
-        {ranking.map((entry) => (
-          <div key={`${entry.rank}_${entry.createdAt}`} className="list-item">
-            <span>
-              {entry.rank}. {entry.nickname}
-            </span>
-            <span>{entry.score}</span>
-          </div>
-        ))}
-      </div>
-      <button className="btn-secondary" onClick={() => setScreen('duel_join')}>
-        메인으로
-      </button>
-      <button className="btn-secondary" onClick={fetchHallRecords}>
-        전당 보기
-      </button>
-    </div>
-  );
+  return null;
 }
 
 export default App;

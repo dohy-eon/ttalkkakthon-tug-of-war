@@ -256,75 +256,8 @@ const insertFameStmt = db.prepare(`
   )
 `);
 
-function getDayStartTimestamp() {
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-}
-
-function normalizeRankingScope(scope) {
-  return scope === 'daily' ? 'daily' : 'all';
-}
-
 function normalizeFameType(type) {
   return type === 'shame' ? 'shame' : 'honor';
-}
-
-function buildRankingWhereClause({ scope, nicknameQuery, scoreMin, scoreMax }) {
-  const where = [];
-  const params = {};
-
-  if (scope === 'daily') {
-    where.push('created_at >= @dayStart');
-    params.dayStart = getDayStartTimestamp();
-  }
-
-  const trimmedName = String(nicknameQuery || '').trim().toLowerCase();
-  if (trimmedName) {
-    where.push('normalized_nickname LIKE @nicknameLike');
-    params.nicknameLike = `%${trimmedName}%`;
-  }
-
-  const min = Number(scoreMin);
-  if (!Number.isNaN(min)) {
-    where.push('score >= @scoreMin');
-    params.scoreMin = Math.max(0, Math.floor(min));
-  }
-
-  const max = Number(scoreMax);
-  if (!Number.isNaN(max)) {
-    where.push('score <= @scoreMax');
-    params.scoreMax = Math.max(0, Math.floor(max));
-  }
-
-  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-  return { whereSql, params };
-}
-
-function getSoloTopRanking({
-  scope = 'all',
-  nicknameQuery = '',
-  scoreMin,
-  scoreMax,
-  limit = MAX_SOLO_RECORDS,
-  offset = 0,
-} = {}) {
-  const normalizedScope = normalizeRankingScope(scope);
-  const safeLimit = clampInt(limit, 1, MAX_SOLO_RECORDS);
-  const safeOffset = Math.max(0, Math.floor(Number(offset) || 0));
-  const { whereSql, params } = buildRankingWhereClause({
-    scope: normalizedScope,
-    nicknameQuery,
-    scoreMin,
-    scoreMax,
-  });
-  const stmt = db.prepare(`
-    SELECT id, nickname, score, max_combo AS maxCombo, accuracy, fever_score AS feverScore, created_at AS createdAt
-    FROM solo_records
-    ${whereSql}
-    ORDER BY score DESC, created_at ASC
-    LIMIT @limit OFFSET @offset
-  `);
-  return stmt.all({ ...params, limit: safeLimit, offset: safeOffset });
 }
 
 function saveSoloRecord(record) {
@@ -333,18 +266,6 @@ function saveSoloRecord(record) {
     pruneSoloStmt.run({ limit: MAX_SOLO_RECORDS });
   });
   transaction(record);
-}
-
-function getSoloRank(record, { scope = 'all' } = {}) {
-  const normalizedScope = normalizeRankingScope(scope);
-  const { whereSql, params } = buildRankingWhereClause({ scope: normalizedScope });
-  const stmt = db.prepare(`
-    SELECT COUNT(*) + 1 AS rank
-    FROM solo_records
-    ${whereSql ? `${whereSql} AND` : 'WHERE'}
-      (score > @score OR (score = @score AND created_at < @createdAt))
-  `);
-  return stmt.get({ ...params, score: record.score, createdAt: record.createdAt }).rank;
 }
 
 function getFameRecords({ type = 'honor', limit = 30 } = {}) {
@@ -679,35 +600,6 @@ io.on('connection', (socket) => {
     emitRoomState(socket.roomId);
   });
 
-  socket.on('get_solo_ranking', (payload, callback) => {
-    let params = payload;
-    let cb = callback;
-    if (typeof payload === 'function') {
-      cb = payload;
-      params = {};
-    }
-    if (typeof cb !== 'function') return;
-
-    const scope = normalizeRankingScope(params?.scope);
-    const top = getSoloTopRanking({
-      scope,
-      nicknameQuery: params?.nicknameQuery || '',
-      scoreMin: params?.scoreMin,
-      scoreMax: params?.scoreMax,
-      limit: params?.limit ?? MAX_SOLO_RECORDS,
-      offset: params?.offset ?? 0,
-    }).map((r, idx) => ({
-        rank: idx + 1,
-        nickname: r.nickname,
-        score: r.score,
-        maxCombo: r.maxCombo,
-        accuracy: r.accuracy,
-        feverScore: r.feverScore,
-        createdAt: r.createdAt,
-      }));
-    cb({ top, scope });
-  });
-
   socket.on('get_fame_records', (payload, callback) => {
     let params = payload;
     let cb = callback;
@@ -748,9 +640,6 @@ io.on('connection', (socket) => {
     };
 
     saveSoloRecord(record);
-    const rank = getSoloRank(record, { scope: 'all' });
-    const dailyRank = getSoloRank(record, { scope: 'daily' });
-
     if (soloLiveState.sessionId && soloLiveState.nickname === validation.name) {
       soloLiveState.active = false;
       soloLiveState.score = score;
@@ -763,7 +652,7 @@ io.on('connection', (socket) => {
       emitSoloLiveState();
     }
 
-    callback({ ok: true, rank, dailyRank });
+    callback({ ok: true });
   });
 
   socket.on('submit_fame_record', (payload, callback) => {

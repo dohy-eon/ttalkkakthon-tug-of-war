@@ -79,11 +79,6 @@ function App() {
   const [winner, setWinner] = useState(null);
   const [endReason, setEndReason] = useState('');
   const [roomClosed, setRoomClosed] = useState('');
-  const [ranking, setRanking] = useState([]);
-  const [rankingScope, setRankingScope] = useState('all');
-  const [rankingNameQuery, setRankingNameQuery] = useState('');
-  const [rankingScoreMin, setRankingScoreMin] = useState('');
-  const [rankingScoreMax, setRankingScoreMax] = useState('');
   const [hallHonor, setHallHonor] = useState([]);
   const [hallShame, setHallShame] = useState([]);
   const [pcShameConsent, setPcShameConsent] = useState(false);
@@ -317,24 +312,6 @@ function App() {
     setPhase('lobby');
   };
 
-  const fetchRanking = (overrides = {}) => {
-    const scope = overrides.scope ?? rankingScope;
-    const nicknameQuery = overrides.nicknameQuery ?? rankingNameQuery;
-    const scoreMin = overrides.scoreMin ?? rankingScoreMin;
-    const scoreMax = overrides.scoreMax ?? rankingScoreMax;
-    const socket = ensureSocket();
-
-    socket.emit(
-      'get_solo_ranking',
-      { scope, nicknameQuery, scoreMin, scoreMax },
-      (res) => {
-        setRanking(res?.top || []);
-        setRankingScope(res?.scope || scope);
-        setPhase('ranking');
-      }
-    );
-  };
-
   const fetchHallRecords = () => {
     const socket = ensureSocket();
     socket.emit('get_fame_records', { type: 'honor', limit: 24 }, (res) => {
@@ -377,6 +354,27 @@ function App() {
     setHonorCameraOpen(false);
   };
 
+  const waitForVideoMetadata = (video) =>
+    new Promise((resolve, reject) => {
+      if (video.videoWidth > 0 && video.videoHeight > 0) {
+        resolve();
+        return;
+      }
+      const timeoutId = setTimeout(() => {
+        cleanup();
+        reject(new Error('video_metadata_timeout'));
+      }, 3000);
+      const onLoadedMetadata = () => {
+        cleanup();
+        resolve();
+      };
+      const cleanup = () => {
+        clearTimeout(timeoutId);
+        video.removeEventListener('loadedmetadata', onLoadedMetadata);
+      };
+      video.addEventListener('loadedmetadata', onLoadedMetadata);
+    });
+
   const openHonorLiveCamera = async () => {
     if (!navigator.mediaDevices?.getUserMedia) {
       setPcFameStatus('이 브라우저는 카메라 촬영을 지원하지 않습니다.');
@@ -384,30 +382,39 @@ function App() {
     }
     try {
       stopHonorLiveCamera();
+      setPcFameStatus('카메라 연결 중...');
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' },
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: 'user',
+        },
         audio: false,
       });
       honorCameraStreamRef.current = stream;
-      if (honorCameraVideoRef.current) {
-        honorCameraVideoRef.current.srcObject = stream;
-        await honorCameraVideoRef.current.play();
+      const video = honorCameraVideoRef.current;
+      if (!video) {
+        setPcFameStatus('카메라 미리보기를 찾을 수 없습니다.');
+        return;
       }
-      setPcFameStatus('');
+      video.srcObject = stream;
+      await waitForVideoMetadata(video);
+      await video.play();
       setHonorCameraOpen(true);
+      setPcFameStatus('카메라 준비 완료!');
     } catch (error) {
-      setPcFameStatus('카메라 권한을 허용한 뒤 다시 시도해주세요.');
+      setPcFameStatus('카메라 접근 실패: 권한을 확인해주세요.');
     }
   };
 
   const captureHonorLivePhoto = () => {
     const video = honorCameraVideoRef.current;
     if (!video || !honorCameraStreamRef.current) {
-      setPcFameStatus('카메라를 먼저 실행해주세요.');
+      setPcFameStatus('카메라가 활성화되지 않았습니다.');
       return;
     }
-    if (!video.videoWidth || !video.videoHeight) {
-      setPcFameStatus('카메라 준비 중입니다. 잠시 후 다시 시도해주세요.');
+    if (video.videoWidth === 0 || video.videoHeight === 0) {
+      setPcFameStatus('카메라 영상을 불러오는 중입니다. 잠시 후 다시 시도하세요.');
       return;
     }
     const canvas = document.createElement('canvas');
@@ -419,7 +426,7 @@ function App() {
       return;
     }
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const imageDataUrl = canvas.toDataURL('image/jpeg', 0.92);
+    const imageDataUrl = canvas.toDataURL('image/jpeg', 0.9);
     stopHonorLiveCamera();
     submitPcFameRecord('honor', imageDataUrl);
   };
@@ -532,9 +539,6 @@ function App() {
           <button className="btn-primary" onClick={createRoom}>
             {selectedMode === 'solo' ? '1인 모드 안내 열기' : '방 만들기'}
           </button>
-          <button className="btn-secondary" onClick={() => fetchRanking()}>
-            랭킹 보기
-          </button>
           <button className="btn-secondary" onClick={fetchHallRecords}>
             전당 보기
           </button>
@@ -588,88 +592,6 @@ function App() {
           <p className="hint">
             마지막 업데이트: {soloLive.updatedAt ? new Date(soloLive.updatedAt).toLocaleTimeString() : '-'}
           </p>
-        </div>
-      </div>
-    );
-  }
-
-  if (phase === 'ranking') {
-    return (
-      <div className="container lobby">
-        <div className="logo-area">
-          <h1 className="title-small">1인 모드 랭킹</h1>
-          <p className="subtitle">전체/일간 필터와 검색을 지원합니다</p>
-        </div>
-
-        <div className="ranking-panel">
-          <div className="ranking-filter-row">
-            <button
-              className={`btn-chip ${rankingScope === 'all' ? 'active' : ''}`}
-              onClick={() => {
-                setRankingScope('all');
-                fetchRanking({ scope: 'all' });
-              }}
-            >
-              전체
-            </button>
-            <button
-              className={`btn-chip ${rankingScope === 'daily' ? 'active' : ''}`}
-              onClick={() => {
-                setRankingScope('daily');
-                fetchRanking({ scope: 'daily' });
-              }}
-            >
-              일간
-            </button>
-          </div>
-
-          <div className="ranking-filter-row">
-            <input
-              className="ranking-input"
-              type="text"
-              placeholder="닉네임 검색"
-              value={rankingNameQuery}
-              onChange={(e) => setRankingNameQuery(e.target.value)}
-            />
-          </div>
-
-          <div className="ranking-filter-row">
-            <input
-              className="ranking-input"
-              type="number"
-              min="0"
-              placeholder="최소 점수"
-              value={rankingScoreMin}
-              onChange={(e) => setRankingScoreMin(e.target.value)}
-            />
-            <input
-              className="ranking-input"
-              type="number"
-              min="0"
-              placeholder="최대 점수"
-              value={rankingScoreMax}
-              onChange={(e) => setRankingScoreMax(e.target.value)}
-            />
-          </div>
-
-          <div className="ranking-filter-row">
-            <button className="btn-primary btn-small" onClick={() => fetchRanking()}>
-              검색 적용
-            </button>
-            <button className="btn-secondary btn-small" onClick={() => setPhase('lobby')}>
-              메인으로
-            </button>
-          </div>
-
-          <div className="ranking-list">
-            {ranking.length === 0 && <p className="hint">기록이 없습니다</p>}
-            {ranking.map((entry) => (
-              <div key={`${entry.rank}_${entry.createdAt}`} className="ranking-item">
-                <span>{entry.rank}. {entry.nickname}</span>
-                <span>{entry.score}</span>
-              </div>
-            ))}
-          </div>
         </div>
       </div>
     );

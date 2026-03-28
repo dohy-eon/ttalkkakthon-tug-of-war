@@ -8,9 +8,10 @@ const PULL_SCALE = 0.22;
 const HORIZONTAL_GRAVITY_Z_MIN = 5.6;
 const HORIZONTAL_GRAVITY_Z_MAX = 9.8;
 const PULL_TRIGGER_THRESHOLD = 0.36;
-const PULL_BEAT_MS = 500;
-const PULL_BEAT_TOLERANCE_MS = 140;
+const PULL_BEAT_MS = 300;
+const PULL_BEAT_TOLERANCE_MS = 90;
 const PULL_PULSE_MS = 240;
+const HAPTIC_COOLDOWN_MS = 70;
 const BAD_WORDS = ['씨발', '병신', '개새', 'fuck', 'shit', 'bitch'];
 const SOLO_DURATION_MS = 30000;
 
@@ -58,6 +59,11 @@ function App() {
   const [soloAccuracy, setSoloAccuracy] = useState(0);
   const [soloFeverScore, setSoloFeverScore] = useState(0);
   const [soloGrade, setSoloGrade] = useState('');
+  const [rhythmJudge, setRhythmJudge] = useState('');
+  const [rhythmJudgeTone, setRhythmJudgeTone] = useState('good');
+  const [judgeFxTick, setJudgeFxTick] = useState(0);
+  const [perfectFx, setPerfectFx] = useState(false);
+  const [perfectFxTick, setPerfectFxTick] = useState(0);
 
   const [needsPermission, setNeedsPermission] = useState(false);
   const [permissionGranted, setPermissionGranted] = useState(false);
@@ -85,6 +91,9 @@ function App() {
   const lastPullBeatAtRef = useRef(0);
   const pullPulseUntilRef = useRef(0);
   const pullOverThresholdRef = useRef(false);
+  const lastHapticAtRef = useRef(0);
+  const judgeClearTimeoutRef = useRef(null);
+  const perfectFxTimeoutRef = useRef(null);
   const soloStatsRef = useRef({
     score: 0,
     combo: 0,
@@ -112,6 +121,8 @@ function App() {
     return () => {
       clearInterval(emitForceIntervalRef.current);
       clearInterval(soloLoopRef.current);
+      clearTimeout(judgeClearTimeoutRef.current);
+      clearTimeout(perfectFxTimeoutRef.current);
       if (socketRef.current) socketRef.current.disconnect();
       if (sensorStartedRef.current) {
         window.removeEventListener('devicemotion', onMotion);
@@ -214,6 +225,62 @@ function App() {
     lastPullBeatAtRef.current = 0;
     pullPulseUntilRef.current = 0;
     pullOverThresholdRef.current = false;
+    lastHapticAtRef.current = 0;
+    clearTimeout(judgeClearTimeoutRef.current);
+    clearTimeout(perfectFxTimeoutRef.current);
+    setRhythmJudge('');
+    setJudgeFxTick(0);
+    setPerfectFx(false);
+    setPerfectFxTick(0);
+  };
+
+  const triggerPullHaptic = ({ timingQuality = 0, fever = false, strong = false } = {}) => {
+    if (typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function') return;
+    const now = Date.now();
+    if (now - lastHapticAtRef.current < HAPTIC_COOLDOWN_MS) return;
+    lastHapticAtRef.current = now;
+
+    if (strong || timingQuality > 0.85) {
+      navigator.vibrate(fever ? [22, 16, 28] : [16, 12, 22]);
+      return;
+    }
+    if (timingQuality > 0.55) {
+      navigator.vibrate(fever ? [18, 10, 18] : [12, 8, 12]);
+      return;
+    }
+    navigator.vibrate(fever ? 14 : 10);
+  };
+
+  const showRhythmJudge = (timingQuality, earlyPull = false) => {
+    if (earlyPull) {
+      setRhythmJudge('MISS');
+      setRhythmJudgeTone('miss');
+      setJudgeFxTick((v) => v + 1);
+      clearTimeout(judgeClearTimeoutRef.current);
+      judgeClearTimeoutRef.current = setTimeout(() => setRhythmJudge(''), 260);
+      return;
+    }
+
+    let label = 'GOOD';
+    let tone = 'good';
+    if (timingQuality >= 0.9) {
+      label = 'PERFECT';
+      tone = 'perfect';
+    } else if (timingQuality >= 0.72) {
+      label = 'GREAT';
+      tone = 'great';
+    }
+    setRhythmJudge(label);
+    setRhythmJudgeTone(tone);
+    setJudgeFxTick((v) => v + 1);
+    if (label === 'PERFECT') {
+      setPerfectFx(true);
+      setPerfectFxTick((v) => v + 1);
+      clearTimeout(perfectFxTimeoutRef.current);
+      perfectFxTimeoutRef.current = setTimeout(() => setPerfectFx(false), 260);
+    }
+    clearTimeout(judgeClearTimeoutRef.current);
+    judgeClearTimeoutRef.current = setTimeout(() => setRhythmJudge(''), 300);
   };
 
   const checkSensorSupport = () => {
@@ -380,10 +447,19 @@ function App() {
       const directional = team === 'A' ? -output.value : output.value;
       setForce(directional);
       socketRef.current?.emit('force', { value: directional, accuracy: output.accuracy });
+      if (output.acceptedPull) {
+        showRhythmJudge(output.timingQuality, false);
+        triggerPullHaptic({
+          timingQuality: output.timingQuality,
+          fever: duelTimeLeftMs <= 5000,
+        });
+      } else if (output.earlyPull) {
+        showRhythmJudge(0, true);
+      }
     }, 50);
 
     return () => clearInterval(emitForceIntervalRef.current);
-  }, [screen, mode, team]);
+  }, [screen, mode, team, duelTimeLeftMs]);
 
   useEffect(() => {
     if (screen !== 'solo_countdown') return;
@@ -497,6 +573,7 @@ function App() {
         stats.combo = 0;
         setSoloCombo(0);
         setSoloGrade('INVALID');
+        showRhythmJudge(0, true);
         return;
       }
 
@@ -529,6 +606,13 @@ function App() {
       const gained = Math.round(baseScore * accuracy * comboMultiplier * rhythmMultiplier * feverMultiplier);
       stats.score += gained;
       if (fever) stats.feverScore += gained;
+
+      showRhythmJudge(timingQuality, false);
+      triggerPullHaptic({
+        timingQuality,
+        fever,
+        strong: grade === 'PERFECT',
+      });
 
       setSoloScore(stats.score);
       setSoloCombo(stats.combo);
@@ -732,7 +816,13 @@ function App() {
     const teamColor = team === 'A' ? 'var(--team-a)' : 'var(--team-b)';
     return (
       <div className="container play" style={{ borderTop: `4px solid ${teamColor}` }}>
+        {perfectFx && <div key={perfectFxTick} className="perfect-fx-overlay" />}
         <div className={`team-badge ${team === 'A' ? 'a' : 'b'}`}>TEAM {team}</div>
+        {!!rhythmJudge && (
+          <div key={judgeFxTick} className={`judge-pop ${rhythmJudgeTone}`}>
+            {rhythmJudge}
+          </div>
+        )}
         <div className="stats-row">
           <span>남은 시간: {Math.ceil(duelTimeLeftMs / 1000)}s</span>
           <span className={duelFever ? 'fever' : ''}>{duelFever ? 'FEVER!' : 'NORMAL'}</span>
@@ -744,7 +834,7 @@ function App() {
         <p className="subtitle">
           수평 유지 후 앞뒤로 짧게 당겼다가 원위치 (팀 방향은 자동 반영)
         </p>
-        <p className="subtitle">리듬: 약 0.5초 간격으로 당기면 가장 유리합니다.</p>
+        <p className="subtitle">리듬: 약 0.3초 간격으로 당기면 가장 유리합니다.</p>
       </div>
     );
   }
@@ -787,7 +877,13 @@ function App() {
     const fever = soloTimeLeftMs <= 5000;
     return (
       <div className="container play">
+        {perfectFx && <div key={perfectFxTick} className="perfect-fx-overlay" />}
         <h2 className="title small">1인 모드</h2>
+        {!!rhythmJudge && (
+          <div key={judgeFxTick} className={`judge-pop ${rhythmJudgeTone}`}>
+            {rhythmJudge}
+          </div>
+        )}
         <div className="stats-row">
           <span>시간 {Math.ceil(soloTimeLeftMs / 1000)}s</span>
           <span className={fever ? 'fever' : ''}>{fever ? 'FEVER!' : 'NORMAL'}</span>
@@ -796,7 +892,7 @@ function App() {
           <p>점수: {soloScore}</p>
           <p>콤보: {soloCombo}</p>
           <p>판정: {soloGrade || '-'}</p>
-          <p>팁: 0.5초 리듬으로 당기기</p>
+          <p>팁: 0.3초 리듬으로 당기기</p>
         </div>
         <div className="force-gauge">
           <div className="force-center" />

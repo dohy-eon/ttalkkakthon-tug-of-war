@@ -181,6 +181,8 @@ body,
 .play {
   justify-content: flex-start;
   padding-top: 28px;
+  position: relative;
+  overflow: hidden;
 }
 
 .stats-row {
@@ -197,6 +199,47 @@ body,
   font-weight: 700;
 }
 
+.judge-pop {
+  font-size: clamp(28px, 8vw, 44px);
+  font-weight: 900;
+  letter-spacing: 1px;
+  text-shadow: 0 0 16px currentColor;
+  animation: judgePop 0.32s ease-out;
+  position: relative;
+  z-index: 1;
+}
+
+.judge-pop.good {
+  color: #22c55e;
+}
+
+.judge-pop.great {
+  color: #38bdf8;
+}
+
+.judge-pop.perfect {
+  color: #fbbf24;
+}
+
+.judge-pop.miss {
+  color: #f87171;
+}
+
+@keyframes judgePop {
+  0% {
+    opacity: 0;
+    transform: translateY(10px) scale(0.8);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(0) scale(1.08);
+  }
+  100% {
+    opacity: 0.95;
+    transform: translateY(-4px) scale(1);
+  }
+}
+
 .force-gauge {
   width: 100%;
   max-width: 360px;
@@ -204,6 +247,17 @@ body,
   background: #334155;
   border-radius: 999px;
   position: relative;
+  z-index: 1;
+}
+
+.force-gauge::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: 999px;
+  pointer-events: none;
+  border: 1px solid rgba(251, 191, 36, 0.28);
+  opacity: 0.65;
 }
 
 .force-center {
@@ -237,4 +291,85 @@ body,
 
 .result.lose {
   color: #f87171;
+}
+
+.perfect-fx-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(circle at 50% 30%, rgba(251, 191, 36, 0.38), rgba(251, 191, 36, 0) 58%),
+    radial-gradient(circle at 25% 70%, rgba(56, 189, 248, 0.24), rgba(56, 189, 248, 0) 40%),
+    radial-gradient(circle at 75% 72%, rgba(34, 197, 94, 0.24), rgba(34, 197, 94, 0) 40%);
+  animation: perfectFlash 0.26s ease-out;
+}
+
+.perfect-fx-overlay::before,
+.perfect-fx-overlay::after {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: rgba(251, 191, 36, 0.9);
+  filter: blur(0.2px);
+  box-shadow:
+    0 0 12px rgba(251, 191, 36, 0.9),
+    34px -10px 0 -2px rgba(56, 189, 248, 0.8),
+    -28px -12px 0 -3px rgba(34, 197, 94, 0.8),
+    18px 16px 0 -3px rgba(251, 191, 36, 0.75),
+    -22px 18px 0 -2px rgba(56, 189, 248, 0.75);
+  animation: particleBurst 0.26s ease-out;
+}
+
+.perfect-fx-overlay::before {
+  left: 30%;
+  top: 38%;
+}
+
+.perfect-fx-overlay::after {
+  right: 30%;
+  top: 42%;
+}
+
+@keyframes perfectFlash {
+  0% {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  30% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.02);
+  }
+}
+
+@keyframes particleBurst {
+  0% {
+    opacity: 0;
+    transform: translateY(10px) scale(0.4);
+  }
+  35% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-12px) scale(1.2);
+  }
+}
+
+.team-badge,
+.title,
+.title.small,
+.stats-row,
+.subtitle,
+.count,
+.card {
+  position: relative;
+  z-index: 1;
 }

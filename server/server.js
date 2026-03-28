@@ -73,6 +73,37 @@ function normalizeRoomMode(mode) {
   return mode === ROOM_MODE_TEAM ? ROOM_MODE_TEAM : ROOM_MODE_DUEL;
 }
 
+function getTeamCounts(room, excludeSocketId = '') {
+  let teamACount = 0;
+  let teamBCount = 0;
+  for (const [socketId, player] of Object.entries(room.players)) {
+    if (excludeSocketId && socketId === excludeSocketId) continue;
+    if (player.team === 'A') teamACount += 1;
+    else if (player.team === 'B') teamBCount += 1;
+  }
+  return { teamACount, teamBCount };
+}
+
+function canAssignTeam(room, nextTeam, excludeSocketId = '') {
+  const { teamACount, teamBCount } = getTeamCounts(room, excludeSocketId);
+  if (room.mode === ROOM_MODE_DUEL) {
+    if (nextTeam === 'A') return teamACount < 1;
+    return teamBCount < 1;
+  }
+  if (nextTeam === 'A') return teamACount < 3;
+  return teamBCount < 3;
+}
+
+function pickAutoTeam(room, excludeSocketId = '') {
+  const { teamACount, teamBCount } = getTeamCounts(room, excludeSocketId);
+  if (room.mode === ROOM_MODE_DUEL) {
+    return teamACount <= teamBCount ? 'A' : 'B';
+  }
+  if (teamACount >= 3 && teamBCount < 3) return 'B';
+  if (teamBCount >= 3 && teamACount < 3) return 'A';
+  return teamACount <= teamBCount ? 'A' : 'B';
+}
+
 app.use('/pc', express.static(path.join(__dirname, '..', 'client', 'pc', 'dist')));
 app.use('/mobile', express.static(path.join(__dirname, '..', 'client', 'mobile', 'dist')));
 
@@ -398,7 +429,7 @@ io.on('connection', (socket) => {
     emitRoomState(roomId);
   });
 
-  socket.on('join_room', ({ roomId, name }, callback) => {
+  socket.on('join_room', ({ roomId, name, preferredTeam }, callback) => {
     const room = rooms[roomId];
     if (!room) {
       callback({ error: '방을 찾을 수 없습니다.' });
@@ -424,14 +455,18 @@ io.on('connection', (socket) => {
       return;
     }
 
-    let team = 'A';
-    if (room.mode === ROOM_MODE_DUEL) {
-      team = room.teamACount === 0 ? 'A' : 'B';
-    } else {
-      // team mode: keep balanced and cap each side at 3
-      if (room.teamACount >= 3 && room.teamBCount < 3) team = 'B';
-      else if (room.teamBCount >= 3 && room.teamACount < 3) team = 'A';
-      else team = room.teamACount <= room.teamBCount ? 'A' : 'B';
+    const requestedTeam = preferredTeam === 'A' || preferredTeam === 'B' ? preferredTeam : '';
+    let team = requestedTeam || pickAutoTeam(room);
+    if (!canAssignTeam(room, team)) {
+      if (requestedTeam) {
+        callback({ error: `TEAM ${requestedTeam}은(는) 이미 가득 찼습니다.` });
+        return;
+      }
+      team = team === 'A' ? 'B' : 'A';
+      if (!canAssignTeam(room, team)) {
+        callback({ error: '선택 가능한 팀이 없습니다.' });
+        return;
+      }
     }
     if (team === 'A') room.teamACount += 1;
     else room.teamBCount += 1;
@@ -464,6 +499,45 @@ io.on('connection', (socket) => {
     console.log(`Player ${socket.id} joined room ${roomId} as team ${team}`);
     callback({ team, name: room.players[socket.id].name, mode: room.mode });
     emitRoomState(roomId);
+  });
+
+  socket.on('set_team', ({ team }, callback) => {
+    const cb = typeof callback === 'function' ? callback : () => {};
+    const room = rooms[socket.roomId];
+    if (!room || !room.players[socket.id]) {
+      cb({ error: '방 정보를 찾을 수 없습니다.' });
+      return;
+    }
+    if (room.started || room.countdown) {
+      cb({ error: '게임 시작 이후에는 팀을 변경할 수 없습니다.' });
+      return;
+    }
+    const nextTeam = team === 'A' ? 'A' : team === 'B' ? 'B' : '';
+    if (!nextTeam) {
+      cb({ error: '유효하지 않은 팀입니다.' });
+      return;
+    }
+
+    const player = room.players[socket.id];
+    if (player.team === nextTeam) {
+      cb({ ok: true, team: nextTeam });
+      return;
+    }
+    if (!canAssignTeam(room, nextTeam, socket.id)) {
+      cb({ error: `TEAM ${nextTeam}은(는) 이미 가득 찼습니다.` });
+      return;
+    }
+
+    if (player.team === 'A') room.teamACount -= 1;
+    else room.teamBCount -= 1;
+
+    player.team = nextTeam;
+    socket.team = nextTeam;
+    if (nextTeam === 'A') room.teamACount += 1;
+    else room.teamBCount += 1;
+
+    emitRoomState(socket.roomId);
+    cb({ ok: true, team: nextTeam });
   });
 
   socket.on('set_ready', ({ sensorGranted, calibrated, baselineGamma }) => {

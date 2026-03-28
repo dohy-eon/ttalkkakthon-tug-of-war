@@ -42,6 +42,7 @@ function App() {
   const [mode, setMode] = useState('duel');
   const [roomId, setRoomId] = useState('');
   const [nickname, setNickname] = useState('');
+  const [joinTeam, setJoinTeam] = useState('');
   const [error, setError] = useState('');
 
   const [team, setTeam] = useState('');
@@ -178,7 +179,10 @@ function App() {
     socketRef.current = socket;
 
     socket.on('room_state', (data) => {
-      setPlayers(data.players || []);
+      const nextPlayers = data.players || [];
+      setPlayers(nextPlayers);
+      const me = nextPlayers.find((p) => p.socketId === socket.id);
+      if (me?.team) setTeam(me.team);
     });
 
     socket.on('game_countdown', ({ seconds }) => {
@@ -223,6 +227,7 @@ function App() {
       setError('방이 종료되었습니다.');
       setScreen('duel_join');
       setMode('duel');
+      setJoinTeam('');
       setTeam('');
       setPlayers([]);
       setHonorImageDataUrl('');
@@ -691,7 +696,7 @@ function App() {
     }
 
     const socket = ensureSocket();
-    socket.emit('join_room', { roomId: roomId.trim(), name: nickname.trim() }, (res) => {
+    socket.emit('join_room', { roomId: roomId.trim(), name: nickname.trim(), preferredTeam: joinTeam || undefined }, (res) => {
       if (res?.error) {
         setError(res.error);
         return;
@@ -729,11 +734,24 @@ function App() {
       socketRef.current = null;
     }
     setMode('duel');
+    setJoinTeam('');
     setTeam('');
     setPlayers([]);
     setDuelWinner('');
     setDuelReason('');
     setScreen('duel_join');
+  };
+
+  const changeTeam = (nextTeam) => {
+    if (!socketRef.current) return;
+    socketRef.current.emit('set_team', { team: nextTeam }, (res) => {
+      if (res?.error) {
+        setError(res.error);
+        return;
+      }
+      setError('');
+      setTeam(res?.team || nextTeam);
+    });
   };
 
   const getTiltStatus = () => {
@@ -769,6 +787,31 @@ function App() {
             value={nickname}
             onChange={(e) => setNickname(e.target.value)}
           />
+          {screen === 'duel_join' && (
+            <>
+              <p className="subtitle">팀 선택</p>
+              <div className="inline-row">
+                <button
+                  className={`btn-chip ${joinTeam === '' ? 'active' : ''}`}
+                  onClick={() => setJoinTeam('')}
+                >
+                  자동
+                </button>
+                <button
+                  className={`btn-chip ${joinTeam === 'A' ? 'active' : ''}`}
+                  onClick={() => setJoinTeam('A')}
+                >
+                  TEAM A
+                </button>
+                <button
+                  className={`btn-chip ${joinTeam === 'B' ? 'active' : ''}`}
+                  onClick={() => setJoinTeam('B')}
+                >
+                  TEAM B
+                </button>
+              </div>
+            </>
+          )}
           {error && <p className="error">{error}</p>}
           <button className="btn-primary" onClick={screen === 'duel_join' ? joinDuel : startSolo}>
             {screen === 'duel_join' ? '참가하기' : '시작하기'}
@@ -843,6 +886,26 @@ function App() {
         <p className="subtitle">
           준비 완료 {ready}/{players.length}
         </p>
+        <div className="form">
+          <p className="subtitle">팀 변경</p>
+          <div className="inline-row">
+            <button
+              className={`btn-chip ${team === 'A' ? 'active' : ''}`}
+              onClick={() => changeTeam('A')}
+              disabled={team === 'A'}
+            >
+              TEAM A
+            </button>
+            <button
+              className={`btn-chip ${team === 'B' ? 'active' : ''}`}
+              onClick={() => changeTeam('B')}
+              disabled={team === 'B'}
+            >
+              TEAM B
+            </button>
+          </div>
+          {error && <p className="error">{error}</p>}
+        </div>
       </div>
     );
   }

@@ -23,8 +23,8 @@ function validateNickname(raw) {
 }
 
 function App() {
-  const [screen, setScreen] = useState('menu');
-  const [mode, setMode] = useState('');
+  const [screen, setScreen] = useState('duel_join');
+  const [mode, setMode] = useState('duel');
   const [roomId, setRoomId] = useState('');
   const [nickname, setNickname] = useState('');
   const [error, setError] = useState('');
@@ -82,7 +82,15 @@ function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const room = params.get('room');
+    const entryMode = params.get('mode');
     if (room) setRoomId(room);
+    if (entryMode === 'solo') {
+      setMode('solo');
+      setScreen('solo_join');
+    } else {
+      setMode('duel');
+      setScreen('duel_join');
+    }
   }, []);
 
   useEffect(() => {
@@ -153,8 +161,8 @@ function App() {
 
     socket.on('room_closed', () => {
       setError('방이 종료되었습니다.');
-      setScreen('menu');
-      setMode('');
+      setScreen('duel_join');
+      setMode('duel');
       setTeam('');
       setPlayers([]);
     });
@@ -479,12 +487,12 @@ function App() {
       socketRef.current.disconnect();
       socketRef.current = null;
     }
-    setMode('');
+    setMode('duel');
     setTeam('');
     setPlayers([]);
     setDuelWinner('');
     setDuelReason('');
-    setScreen('menu');
+    setScreen('duel_join');
   };
 
   const getTiltStatus = () => {
@@ -494,31 +502,10 @@ function App() {
     return '조정 필요';
   };
 
-  if (screen === 'menu') {
-    return (
-      <div className="container">
-        <h1 className="title">TILT TUG</h1>
-        <p className="subtitle">자이로 줄다리기 게임</p>
-        <div className="form">
-          <button className="btn-primary" onClick={() => setScreen('solo_join')}>
-            1인 모드
-          </button>
-          <button className="btn-secondary" onClick={() => setScreen('duel_join')}>
-            2인 모드 참가
-          </button>
-          <button className="btn-secondary" onClick={fetchRanking}>
-            랭킹 보기
-          </button>
-        </div>
-        {error && <p className="error">{error}</p>}
-      </div>
-    );
-  }
-
   if (screen === 'duel_join' || screen === 'solo_join') {
     return (
       <div className="container">
-        <h2 className="title small">{screen === 'duel_join' ? '2인 모드 참가' : '1인 모드 시작'}</h2>
+        <h2 className="title small">{screen === 'duel_join' ? '참가하기' : '1인 모드 시작'}</h2>
         <div className="form">
           {screen === 'duel_join' && (
             <input
@@ -543,9 +530,9 @@ function App() {
           <button className="btn-primary" onClick={screen === 'duel_join' ? joinDuel : startSolo}>
             {screen === 'duel_join' ? '참가하기' : '시작하기'}
           </button>
-          <button className="btn-secondary" onClick={() => setScreen('menu')}>
-            뒤로가기
-          </button>
+          <button className="btn-secondary" onClick={fetchRanking}>랭킹 보기</button>
+          <p className="subtitle">모드 선택은 PC에서 진행됩니다.</p>
+          {screen === 'solo_join' && <p className="subtitle">1인 모드는 PC 링크/QR로 진입할 수 있습니다.</p>}
         </div>
       </div>
     );
@@ -725,7 +712,7 @@ function App() {
           <button className="btn-secondary" onClick={fetchRanking}>
             랭킹 보기
           </button>
-          <button className="btn-secondary" onClick={() => setScreen('menu')}>
+          <button className="btn-secondary" onClick={() => setScreen('duel_join')}>
             메인으로
           </button>
         </div>
@@ -797,7 +784,7 @@ function App() {
           </div>
         ))}
       </div>
-      <button className="btn-secondary" onClick={() => setScreen('menu')}>
+      <button className="btn-secondary" onClick={() => setScreen('duel_join')}>
         메인으로
       </button>
     </div>

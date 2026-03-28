@@ -6,6 +6,8 @@ const SERVER_URL = window.location.origin;
 
 function App() {
   const [phase, setPhase] = useState('lobby');
+  const [selectedMode, setSelectedMode] = useState('duel');
+  const [roomMode, setRoomMode] = useState('duel');
   const [roomId, setRoomId] = useState('');
   const [position, setPosition] = useState(0);
   const [forceA, setForceA] = useState(0);
@@ -38,6 +40,7 @@ function App() {
     if (listenersBoundRef.current) return;
 
     socket.on('room_state', (data) => {
+      setRoomMode(data.mode || 'duel');
       setPlayerCount(data.playerCount);
       setTeamACount(data.teamACount);
       setTeamBCount(data.teamBCount);
@@ -105,9 +108,14 @@ function App() {
   };
 
   const createRoom = () => {
+    if (selectedMode === 'solo') {
+      setPhase('solo_guide');
+      return;
+    }
     const socket = ensureSocket();
-    socket.emit('create_room', (data) => {
+    socket.emit('create_room', { mode: selectedMode }, (data) => {
       setRoomId(data.roomId);
+      setRoomMode(data.mode || selectedMode);
       setPhase('waiting');
     });
   };
@@ -139,7 +147,12 @@ function App() {
   };
 
   const readyCount = players.filter((p) => p.ready).length;
-  const canStart = playerCount >= 2 && readyCount === playerCount && phase === 'waiting';
+  const canStart =
+    phase === 'waiting' &&
+    readyCount === playerCount &&
+    (roomMode === 'duel'
+      ? playerCount >= 2
+      : playerCount >= 4 && teamACount >= 2 && teamBCount >= 2);
 
   if (phase === 'lobby') {
     return (
@@ -148,13 +161,62 @@ function App() {
           <h1 className="title">TILT TUG</h1>
           <p className="subtitle">모바일 기울기로 조작하는 줄다리기</p>
         </div>
+        <div className="mode-selector">
+          <button
+            className={`btn-chip ${selectedMode === 'solo' ? 'active' : ''}`}
+            onClick={() => setSelectedMode('solo')}
+          >
+            1인
+          </button>
+          <button
+            className={`btn-chip ${selectedMode === 'duel' ? 'active' : ''}`}
+            onClick={() => setSelectedMode('duel')}
+          >
+            2인
+          </button>
+          <button
+            className={`btn-chip ${selectedMode === 'team' ? 'active' : ''}`}
+            onClick={() => setSelectedMode('team')}
+          >
+            팀전
+          </button>
+        </div>
         <div className="lobby-actions">
           <button className="btn-primary" onClick={createRoom}>
-            방 만들기
+            {selectedMode === 'solo' ? '1인 모드 안내 열기' : '방 만들기'}
           </button>
           <button className="btn-secondary" onClick={() => fetchRanking()}>
             랭킹 보기
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (phase === 'solo_guide') {
+    const soloUrl = `${window.location.origin}/mobile?mode=solo`;
+    const soloQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(soloUrl)}`;
+
+    return (
+      <div className="container lobby">
+        <div className="logo-area">
+          <h1 className="title-small">1인 모드 안내</h1>
+          <p className="subtitle">모바일은 참가/준비 전용이며, 1인은 전용 링크로 진입합니다.</p>
+        </div>
+        <div className="join-guide">
+          <p>모바일에서 아래 주소로 접속하세요</p>
+          <div className="url-box">{soloUrl}</div>
+          <div className="qr-wrap">
+            <img src={soloQrUrl} alt="solo mode qr" />
+          </div>
+          <div className="lobby-actions">
+            <button className="btn-primary btn-small" onClick={() => window.open(soloUrl, '_blank')}>
+              링크 열기
+            </button>
+            <button className="btn-secondary btn-small" onClick={() => setPhase('lobby')}>
+              뒤로
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -269,6 +331,7 @@ function App() {
 
       {(phase === 'waiting' || phase === 'countdown' || phase === 'playing') && (
         <div className="status-bar">
+          <span>모드: {roomMode === 'team' ? '팀전' : '2인'}</span>
           <span>준비 완료: {readyCount}/{playerCount}</span>
           <span className={fever ? 'fever-on' : ''}>
             남은 시간: {timeLeftSec}s {fever ? ' - FEVER!' : ''}
@@ -291,7 +354,11 @@ function App() {
             </button>
           )}
           {!canStart && (
-            <p className="hint">최소 2명이 접속해야 시작할 수 있습니다</p>
+            <p className="hint">
+              {roomMode === 'team'
+                ? '팀전은 각 팀 2명 이상(총 4명 이상) + 전원 준비완료 시 시작됩니다'
+                : '2인 모드는 2명 + 전원 준비완료 시 시작됩니다'}
+            </p>
           )}
           <div className="ready-list">
             {players.map((p) => (

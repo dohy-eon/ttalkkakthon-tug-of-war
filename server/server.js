@@ -20,6 +20,8 @@ const FORBIDDEN_WORDS = ['씨발', '병신', '개새', 'fuck', 'shit', 'bitch'];
 const MAX_SOLO_RECORDS = 300;
 const DUEL_DURATION_MS = 30000;
 const FEVER_THRESHOLD_MS = 5000;
+const ROOM_MODE_DUEL = 'duel';
+const ROOM_MODE_TEAM = 'team';
 
 function normalizeName(raw) {
   return String(raw || '').trim();
@@ -43,6 +45,10 @@ function generateRoomId() {
     id = String(Math.floor(1000 + Math.random() * 9000));
   } while (rooms[id]);
   return id;
+}
+
+function normalizeRoomMode(mode) {
+  return mode === ROOM_MODE_TEAM ? ROOM_MODE_TEAM : ROOM_MODE_DUEL;
 }
 
 app.use('/pc', express.static(path.join(__dirname, '..', 'client', 'pc', 'dist')));
@@ -292,6 +298,7 @@ function emitRoomState(roomId) {
   if (!room) return;
   io.to(roomId).emit('room_state', {
     roomId,
+    mode: room.mode,
     started: room.started,
     countdown: room.countdown,
     teamACount: room.teamACount,
@@ -331,9 +338,19 @@ function handleForfeitIfNeeded(roomId) {
 io.on('connection', (socket) => {
   console.log(`Connected: ${socket.id}`);
 
-  socket.on('create_room', (callback) => {
+  socket.on('create_room', (payload, callback) => {
+    let params = payload;
+    let cb = callback;
+    if (typeof payload === 'function') {
+      cb = payload;
+      params = {};
+    }
+    if (typeof cb !== 'function') return;
+
+    const mode = normalizeRoomMode(params?.mode);
     const roomId = generateRoomId();
     rooms[roomId] = {
+      mode,
       hostSocketId: socket.id,
       players: {},
       position: 0,
@@ -350,7 +367,7 @@ io.on('connection', (socket) => {
     socket.roomId = roomId;
     socket.isHost = true;
     console.log(`Room created: ${roomId}`);
-    callback({ roomId });
+    cb({ roomId, mode });
     emitRoomState(roomId);
   });
 
@@ -370,9 +387,27 @@ io.on('connection', (socket) => {
       return;
     }
 
-    const team = room.teamACount <= room.teamBCount ? 'A' : 'B';
-    if (team === 'A') room.teamACount++;
-    else room.teamBCount++;
+    const totalCount = Object.keys(room.players).length;
+    if (room.mode === ROOM_MODE_DUEL && totalCount >= 2) {
+      callback({ error: '2인 모드는 최대 2명까지 입장 가능합니다.' });
+      return;
+    }
+    if (room.mode === ROOM_MODE_TEAM && totalCount >= 6) {
+      callback({ error: '팀전 모드는 최대 6명까지 입장 가능합니다.' });
+      return;
+    }
+
+    let team = 'A';
+    if (room.mode === ROOM_MODE_DUEL) {
+      team = room.teamACount === 0 ? 'A' : 'B';
+    } else {
+      // team mode: keep balanced and cap each side at 3
+      if (room.teamACount >= 3 && room.teamBCount < 3) team = 'B';
+      else if (room.teamBCount >= 3 && room.teamACount < 3) team = 'A';
+      else team = room.teamACount <= room.teamBCount ? 'A' : 'B';
+    }
+    if (team === 'A') room.teamACount += 1;
+    else room.teamBCount += 1;
 
     room.players[socket.id] = {
       name: validation.name,
@@ -395,7 +430,7 @@ io.on('connection', (socket) => {
     socket.team = team;
 
     console.log(`Player ${socket.id} joined room ${roomId} as team ${team}`);
-    callback({ team, name: room.players[socket.id].name });
+    callback({ team, name: room.players[socket.id].name, mode: room.mode });
     emitRoomState(roomId);
   });
 
@@ -433,8 +468,14 @@ io.on('connection', (socket) => {
   socket.on('start_game', () => {
     const room = rooms[socket.roomId];
     if (!room || !socket.isHost) return;
-    if (Object.keys(room.players).length < 2) return;
     if (room.countdown || room.started) return;
+
+    const totalPlayers = Object.keys(room.players).length;
+    if (room.mode === ROOM_MODE_DUEL && totalPlayers < 2) return;
+    if (room.mode === ROOM_MODE_TEAM) {
+      if (totalPlayers < 4) return;
+      if (room.teamACount < 2 || room.teamBCount < 2) return;
+    }
 
     const everyoneReady = Object.values(room.players).every((p) => p.ready);
     if (!everyoneReady) return;

@@ -8,8 +8,8 @@ const PULL_SCALE = 0.22;
 const HORIZONTAL_GRAVITY_Z_MIN = 5.6;
 const HORIZONTAL_GRAVITY_Z_MAX = 9.8;
 const PULL_TRIGGER_THRESHOLD = 0.36;
-const PULL_BEAT_MS = 300;
-const PULL_BEAT_TOLERANCE_MS = 90;
+const PULL_BEAT_MS = 500;
+const PULL_BEAT_TOLERANCE_MS = 180;
 const PULL_PULSE_MS = 240;
 const HAPTIC_COOLDOWN_MS = 70;
 const BAD_WORDS = ['씨발', '병신', '개새', 'fuck', 'shit', 'bitch'];
@@ -263,10 +263,10 @@ function App() {
 
     let label = 'GOOD';
     let tone = 'good';
-    if (timingQuality >= 0.9) {
+    if (timingQuality >= 0.82) {
       label = 'PERFECT';
       tone = 'perfect';
-    } else if (timingQuality >= 0.72) {
+    } else if (timingQuality >= 0.58) {
       label = 'GREAT';
       tone = 'great';
     }
@@ -834,7 +834,7 @@ function App() {
         <p className="subtitle">
           수평 유지 후 앞뒤로 짧게 당겼다가 원위치 (팀 방향은 자동 반영)
         </p>
-        <p className="subtitle">리듬: 약 0.3초 간격으로 당기면 가장 유리합니다.</p>
+        <p className="subtitle">리듬: 약 0.5초 간격으로 당기면 가장 유리합니다.</p>
       </div>
     );
   }
@@ -892,7 +892,7 @@ function App() {
           <p>점수: {soloScore}</p>
           <p>콤보: {soloCombo}</p>
           <p>판정: {soloGrade || '-'}</p>
-          <p>팁: 0.3초 리듬으로 당기기</p>
+          <p>팁: 0.5초 리듬으로 당기기</p>
         </div>
         <div className="force-gauge">
           <div className="force-center" />

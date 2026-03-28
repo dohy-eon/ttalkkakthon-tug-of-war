@@ -3,13 +3,13 @@ import { io } from 'socket.io-client';
 import './App.css';
 
 const SERVER_URL = window.location.origin;
-const DECAY = 0.9;
-const PULL_SCALE = 0.22;
-const HORIZONTAL_GRAVITY_Z_MIN = 5.6;
+const DECAY = 0.82;
+const PULL_SCALE = 0.4;
+const HORIZONTAL_GRAVITY_Z_MIN = 4.8;
 const HORIZONTAL_GRAVITY_Z_MAX = 9.8;
-const PULL_TRIGGER_THRESHOLD = 0.36;
-const PULL_BEAT_MS = 500;
-const PULL_BEAT_TOLERANCE_MS = 180;
+const PULL_TRIGGER_THRESHOLD = 0.25;
+const PULL_BEAT_MS = 450;
+const PULL_BEAT_TOLERANCE_MS = 250;
 const PULL_PULSE_MS = 240;
 const HAPTIC_COOLDOWN_MS = 70;
 const BAD_WORDS = ['씨발', '병신', '개새', 'fuck', 'shit', 'bitch'];
@@ -17,6 +17,13 @@ const SOLO_DURATION_MS = 30000;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function getRhythmJudgeInfo(timingQuality, earlyPull = false) {
+  if (earlyPull) return { label: 'MISS', tone: 'miss' };
+  if (timingQuality >= 0.82) return { label: 'PERFECT', tone: 'perfect' };
+  if (timingQuality >= 0.58) return { label: 'GREAT', tone: 'great' };
+  return { label: 'GOOD', tone: 'good' };
 }
 
 function validateNickname(raw) {
@@ -95,6 +102,7 @@ function App() {
   const lastPullBeatAtRef = useRef(0);
   const pullPulseUntilRef = useRef(0);
   const pullOverThresholdRef = useRef(false);
+  const lastPullAxisRef = useRef(0);
   const lastHapticAtRef = useRef(0);
   const judgeClearTimeoutRef = useRef(null);
   const perfectFxTimeoutRef = useRef(null);
@@ -148,9 +156,12 @@ function App() {
     );
     horizontalConfidenceRef.current = horizontalConfidence;
 
-    // 수평 자세에서 앞뒤 당기기 축은 y축 가속으로 본다.
-    const pullAxis = Math.abs(Number(linear?.y) || 0);
-    const rawPull = clamp(pullAxis * PULL_SCALE * (0.35 + horizontalConfidence * 0.65), 0, 1);
+    // linear acceleration 이 없는 기기에서는 includingGravity 를 fallback 으로 사용한다.
+    const pullAxis = Number(linear?.y ?? gravity?.y ?? 0);
+    const pullDelta = Math.abs(pullAxis - lastPullAxisRef.current);
+    lastPullAxisRef.current = pullAxis;
+    const axisBoost = linear?.y == null ? 0.75 : 1;
+    const rawPull = clamp(pullDelta * PULL_SCALE * axisBoost * (0.8 + horizontalConfidence * 0.2), 0, 1);
     const smoothed = pullForceRef.current * DECAY + rawPull * (1 - DECAY);
     pullForceRef.current = clamp(smoothed, 0, 1);
   };
@@ -231,6 +242,7 @@ function App() {
     baselineGammaRef.current = 0;
     setForce(0);
     pullForceRef.current = 0;
+    lastPullAxisRef.current = 0;
     horizontalConfidenceRef.current = 0;
     lastPullBeatAtRef.current = 0;
     pullPulseUntilRef.current = 0;
@@ -262,27 +274,15 @@ function App() {
   };
 
   const showRhythmJudge = (timingQuality, earlyPull = false) => {
-    if (earlyPull) {
-      setRhythmJudge('MISS');
-      setRhythmJudgeTone('miss');
-      setJudgeFxTick((v) => v + 1);
+    const { label, tone } = getRhythmJudgeInfo(timingQuality, earlyPull);
+    setRhythmJudge(label);
+    setRhythmJudgeTone(tone);
+    setJudgeFxTick((v) => v + 1);
+    if (label === 'MISS') {
       clearTimeout(judgeClearTimeoutRef.current);
       judgeClearTimeoutRef.current = setTimeout(() => setRhythmJudge(''), 260);
       return;
     }
-
-    let label = 'GOOD';
-    let tone = 'good';
-    if (timingQuality >= 0.82) {
-      label = 'PERFECT';
-      tone = 'perfect';
-    } else if (timingQuality >= 0.58) {
-      label = 'GREAT';
-      tone = 'great';
-    }
-    setRhythmJudge(label);
-    setRhythmJudgeTone(tone);
-    setJudgeFxTick((v) => v + 1);
     if (label === 'PERFECT') {
       setPerfectFx(true);
       setPerfectFxTick((v) => v + 1);
@@ -417,7 +417,7 @@ function App() {
     const now = Date.now();
     const accuracy = getAccuracy();
     const tiltError = getTiltError();
-    if (tiltError > 55) return { value: 0, accuracy: 0, acceptedPull: false, earlyPull: false, timingQuality: 0 };
+    if (tiltError > 70) return { value: 0, accuracy: 0, acceptedPull: false, earlyPull: false, timingQuality: 0 };
 
     const pullLevel = pullForceRef.current;
     const overThreshold = pullLevel >= PULL_TRIGGER_THRESHOLD;
@@ -425,7 +425,7 @@ function App() {
     let earlyPull = false;
     let timingQuality = 0;
 
-    if (overThreshold && !pullOverThresholdRef.current) {
+    if (overThreshold) {
       const lastBeat = lastPullBeatAtRef.current;
       const interval = lastBeat > 0 ? now - lastBeat : PULL_BEAT_MS;
       const minAllowed = PULL_BEAT_MS - PULL_BEAT_TOLERANCE_MS;
@@ -436,7 +436,7 @@ function App() {
         timingQuality = lastBeat > 0 ? clamp(1 - offset / PULL_BEAT_TOLERANCE_MS, 0, 1) : 0.75;
         lastPullBeatAtRef.current = now;
         pullPulseUntilRef.current = now + PULL_PULSE_MS;
-      } else {
+      } else if (interval < Math.max(80, minAllowed * 0.55)) {
         earlyPull = true;
       }
     }
@@ -456,7 +456,18 @@ function App() {
       const output = getOutputForce();
       const directional = team === 'A' ? -output.value : output.value;
       setForce(directional);
-      socketRef.current?.emit('force', { value: directional, accuracy: output.accuracy });
+      const judgeInfo = output.acceptedPull
+        ? getRhythmJudgeInfo(output.timingQuality, false)
+        : output.earlyPull
+          ? getRhythmJudgeInfo(0, true)
+          : null;
+      socketRef.current?.emit('force', {
+        value: directional,
+        accuracy: output.accuracy,
+        judge: judgeInfo?.label,
+        judgeTone: judgeInfo?.tone,
+        judgeAt: judgeInfo ? Date.now() : undefined,
+      });
       if (output.acceptedPull) {
         showRhythmJudge(output.timingQuality, false);
         triggerPullHaptic({

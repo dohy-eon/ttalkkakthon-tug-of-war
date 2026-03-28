@@ -27,6 +27,7 @@ function App() {
   const [maxComboB, setMaxComboB] = useState(0);
   const [gainA, setGainA] = useState(0);
   const [gainB, setGainB] = useState(0);
+  const [playerJudges, setPlayerJudges] = useState([]);
   const [winner, setWinner] = useState(null);
   const [endReason, setEndReason] = useState('');
   const [roomClosed, setRoomClosed] = useState('');
@@ -37,6 +38,11 @@ function App() {
   const [rankingScoreMax, setRankingScoreMax] = useState('');
   const [hallHonor, setHallHonor] = useState([]);
   const [hallShame, setHallShame] = useState([]);
+  const [pcHonorImage, setPcHonorImage] = useState('');
+  const [pcShameImage, setPcShameImage] = useState('');
+  const [pcShameConsent, setPcShameConsent] = useState(false);
+  const [pcFameStatus, setPcFameStatus] = useState('');
+  const [pcRecentFame, setPcRecentFame] = useState([]);
   const [soloLive, setSoloLive] = useState({
     active: false,
     nickname: '-',
@@ -90,6 +96,7 @@ function App() {
       setMaxComboB(0);
       setGainA(0);
       setGainB(0);
+      setPlayerJudges([]);
     });
 
     socket.on('game_state', (state) => {
@@ -108,12 +115,19 @@ function App() {
       setMaxComboB(state.maxComboB ?? 0);
       setGainA(state.gainA ?? 0);
       setGainB(state.gainB ?? 0);
+      setPlayerJudges(state.playerJudges || []);
     });
 
     socket.on('game_over', (data) => {
       setWinner(data.winner);
       setEndReason(data.reason || '');
       setPlayers(data.players || []);
+      setPcHonorImage('');
+      setPcShameImage('');
+      setPcShameConsent(false);
+      setPcFameStatus('');
+      setPcRecentFame([]);
+      setPlayerJudges([]);
       setPhase('result');
     });
 
@@ -134,6 +148,12 @@ function App() {
       setMaxComboB(0);
       setGainA(0);
       setGainB(0);
+      setPlayerJudges([]);
+      setPcHonorImage('');
+      setPcShameImage('');
+      setPcShameConsent(false);
+      setPcFameStatus('');
+      setPcRecentFame([]);
       setPhase('waiting');
     });
 
@@ -217,6 +237,67 @@ function App() {
     socket.emit('get_fame_records', { type: 'shame', limit: 24 }, (res) => {
       setHallShame(res?.records || []);
     });
+  };
+
+  const readImageAsDataUrl = (file, onLoaded) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setPcFameStatus('이미지 파일만 업로드할 수 있습니다.');
+      return;
+    }
+    if (file.size > 1_000_000) {
+      setPcFameStatus('이미지 용량은 1MB 이하를 권장합니다.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      onLoaded(String(reader.result || ''));
+      setPcFameStatus('');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const submitPcFameRecord = (type) => {
+    const imageDataUrl = type === 'honor' ? pcHonorImage : pcShameImage;
+    if (!imageDataUrl) {
+      setPcFameStatus(type === 'honor' ? '명예 사진을 먼저 선택해주세요.' : '불명예 사진을 먼저 선택해주세요.');
+      return;
+    }
+    if (type === 'shame' && !pcShameConsent) {
+      setPcFameStatus('불명예 등록은 동의가 필요합니다.');
+      return;
+    }
+
+    const winnerTeam = winner === 'DRAW' ? '' : winner;
+    const loserTeam = winner === 'A' ? 'B' : winner === 'B' ? 'A' : '';
+    const displayName = type === 'honor' ? `TEAM ${winnerTeam}` : `TEAM ${loserTeam}`;
+    ensureSocket().emit(
+      'submit_fame_record',
+      {
+        type,
+        mode: roomMode,
+        displayName,
+        imageDataUrl,
+      },
+      (res) => {
+        if (res?.error) {
+          setPcFameStatus(res.error);
+          return;
+        }
+        const created = {
+          id: res.recordId || `${Date.now()}`,
+          type,
+          mode: roomMode,
+          displayName,
+          imageDataUrl,
+          createdAt: Date.now(),
+        };
+        setPcRecentFame((prev) => [created, ...prev].slice(0, 8));
+        if (type === 'honor') setHallHonor((prev) => [created, ...prev].slice(0, 24));
+        else setHallShame((prev) => [created, ...prev].slice(0, 24));
+        setPcFameStatus(type === 'honor' ? '명예의 전당 등록 완료!' : '불명예의 전당 등록 완료!');
+      }
+    );
   };
 
   const readyCount = players.filter((p) => p.ready).length;
@@ -512,6 +593,16 @@ function App() {
         </div>
       )}
 
+      {playerJudges.length > 0 && (
+        <div className="judge-board">
+          {playerJudges.map((entry) => (
+            <span key={`${entry.socketId}_${entry.at}`} className={`judge-badge ${entry.tone || 'good'}`}>
+              {entry.team} - {entry.name}: {entry.judge}
+            </span>
+          ))}
+        </div>
+      )}
+
       {phase === 'waiting' && (
         <div className="join-guide">
           <p>모바일로 아래 주소에 접속하세요</p>
@@ -606,6 +697,57 @@ function App() {
             <p className="hint">종료 사유: {endReason || 'normal'}</p>
             <p className="hint">최종 점수 A:{scoreA} / B:{scoreB}</p>
             <p className="hint">최고 콤보 A:{maxComboA} / B:{maxComboB}</p>
+            {winner !== 'DRAW' && (
+              <div className="pc-fame-wrap">
+                <div className="pc-fame-col honor">
+                  <p>명예의 전당 (승리팀)</p>
+                  <input
+                    className="pc-file-input"
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={(e) => readImageAsDataUrl(e.target.files?.[0], setPcHonorImage)}
+                  />
+                  {pcHonorImage && <img className="pc-fame-preview" src={pcHonorImage} alt="honor preview" />}
+                  <button className="btn-primary btn-small" onClick={() => submitPcFameRecord('honor')}>
+                    명예 등록
+                  </button>
+                </div>
+                <div className="pc-fame-col shame">
+                  <p>불명예의 전당 (패배팀)</p>
+                  <input
+                    className="pc-file-input"
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={(e) => readImageAsDataUrl(e.target.files?.[0], setPcShameImage)}
+                  />
+                  {pcShameImage && <img className="pc-fame-preview" src={pcShameImage} alt="shame preview" />}
+                  <label className="pc-consent-row">
+                    <input
+                      type="checkbox"
+                      checked={pcShameConsent}
+                      onChange={(e) => setPcShameConsent(e.target.checked)}
+                    />
+                    <span>불명예 등록 동의</span>
+                  </label>
+                  <button className="btn-primary btn-small" onClick={() => submitPcFameRecord('shame')}>
+                    불명예 등록
+                  </button>
+                </div>
+              </div>
+            )}
+            {pcFameStatus && <p className="hint">{pcFameStatus}</p>}
+            {pcRecentFame.length > 0 && (
+              <div className="pc-fame-recent">
+                {pcRecentFame.map((item) => (
+                  <article key={item.id} className="pc-fame-recent-card">
+                    <img src={item.imageDataUrl} alt={`${item.displayName} recent`} />
+                    <span>{item.type === 'honor' ? '명예' : '불명예'} - {item.displayName}</span>
+                  </article>
+                ))}
+              </div>
+            )}
             <div className="ready-list">
               {players.map((p) => (
                 <div key={p.socketId} className="ready-item ok">

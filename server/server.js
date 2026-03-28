@@ -35,7 +35,10 @@ const DUEL_DURATION_MS = 30000;
 const FEVER_THRESHOLD_MS = 5000;
 const ROOM_MODE_DUEL = 'duel';
 const ROOM_MODE_TEAM = 'team';
-const COMBO_THRESHOLD = 0.2;
+const COMBO_THRESHOLD = 0.15;
+const JUDGE_LABELS = new Set(['GOOD', 'GREAT', 'PERFECT', 'MISS']);
+const JUDGE_TONES = new Set(['good', 'great', 'perfect', 'miss']);
+const JUDGE_VISIBLE_MS = 1200;
 
 function normalizeName(raw) {
   return String(raw || '').trim();
@@ -514,6 +517,9 @@ io.on('connection', (socket) => {
       maxCombo: 0,
       accuracySum: 0,
       accuracyCount: 0,
+      rhythmJudge: '',
+      rhythmJudgeTone: '',
+      rhythmJudgeAt: 0,
     };
 
     socket.join(roomId);
@@ -535,7 +541,7 @@ io.on('connection', (socket) => {
     emitRoomState(socket.roomId);
   });
 
-  socket.on('force', ({ value, accuracy }) => {
+  socket.on('force', ({ value, accuracy, judge, judgeTone, judgeAt }) => {
     const room = rooms[socket.roomId];
     if (!room || !room.players[socket.id] || !room.started) return;
 
@@ -547,6 +553,11 @@ io.on('connection', (socket) => {
     player.contribution += Math.abs(clampedForce);
     player.accuracySum += clampedAcc;
     player.accuracyCount += 1;
+    if (JUDGE_LABELS.has(judge)) {
+      player.rhythmJudge = judge;
+      player.rhythmJudgeTone = JUDGE_TONES.has(judgeTone) ? judgeTone : 'good';
+      player.rhythmJudgeAt = Number.isFinite(judgeAt) ? Number(judgeAt) : Date.now();
+    }
 
     if (Math.abs(clampedForce) > 0.12 && clampedAcc > 0.3) {
       player.combo += 1;
@@ -609,6 +620,9 @@ io.on('connection', (socket) => {
         p.maxCombo = 0;
         p.accuracySum = 0;
         p.accuracyCount = 0;
+        p.rhythmJudge = '';
+        p.rhythmJudgeTone = '';
+        p.rhythmJudgeAt = 0;
       });
       io.to(socket.roomId).emit('game_started');
       emitRoomState(socket.roomId);
@@ -636,7 +650,12 @@ io.on('connection', (socket) => {
     room.countdown = null;
     clearInterval(room.countdownInterval);
     room.countdownInterval = null;
-    Object.values(room.players).forEach((p) => (p.force = 0));
+    Object.values(room.players).forEach((p) => {
+      p.force = 0;
+      p.rhythmJudge = '';
+      p.rhythmJudgeTone = '';
+      p.rhythmJudgeAt = 0;
+    });
     io.to(socket.roomId).emit('game_reset');
     emitRoomState(socket.roomId);
   });
@@ -902,6 +921,17 @@ setInterval(() => {
     room.gainB = gainB;
     room.scoreA += gainA;
     room.scoreB += gainB;
+    const now = Date.now();
+    const playerJudges = Object.entries(room.players)
+      .map(([socketId, player]) => ({
+        socketId,
+        name: player.name,
+        team: player.team,
+        judge: player.rhythmJudge,
+        tone: player.rhythmJudgeTone || 'good',
+        at: player.rhythmJudgeAt || 0,
+      }))
+      .filter((entry) => entry.judge && now - entry.at <= JUDGE_VISIBLE_MS);
 
     let winner = null;
     if (room.position >= 100) winner = 'A';
@@ -934,6 +964,7 @@ setInterval(() => {
       maxComboB: room.maxComboB,
       gainA: room.gainA,
       gainB: room.gainB,
+      playerJudges,
       timeLeftMs,
       fever,
     });

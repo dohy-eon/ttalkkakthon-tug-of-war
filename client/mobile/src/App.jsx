@@ -7,11 +7,11 @@ const DECAY = 0.82;
 const PULL_SCALE = 0.4;
 const HORIZONTAL_GRAVITY_Z_MIN = 4.8;
 const HORIZONTAL_GRAVITY_Z_MAX = 9.8;
-const PULL_TRIGGER_THRESHOLD = 0.58;
+const PULL_TRIGGER_THRESHOLD = 0.45;
 const PULL_BEAT_MS = 450;
-const PULL_BEAT_TOLERANCE_MS = 210;
+const PULL_BEAT_TOLERANCE_MS = 280;
 const PULL_FIRST_HIT_QUALITY = 0.8;
-const PULL_PULSE_MS = 240;
+const PULL_PULSE_MS = 300;
 const HAPTIC_COOLDOWN_MS = 70;
 const BAD_WORDS = ['씨발', '병신', '개새', 'fuck', 'shit', 'bitch'];
 const SOLO_DURATION_MS = 30000;
@@ -458,7 +458,7 @@ function App() {
     const now = Date.now();
     const accuracy = getAccuracy();
     const tiltError = getTiltError();
-    if (tiltError > 70) {
+    if (tiltError > 75) {
       return {
         value: 0,
         accuracy: 0,
@@ -479,29 +479,30 @@ function App() {
 
     if (risingEdge) {
       const lastBeat = lastPullBeatAtRef.current;
-      const minAllowed = PULL_BEAT_MS - PULL_BEAT_TOLERANCE_MS;
-      const maxAllowed = PULL_BEAT_MS + PULL_BEAT_TOLERANCE_MS;
       const interval = lastBeat > 0 ? now - lastBeat : PULL_BEAT_MS;
+      const minCooldown = 150;
 
-      if (lastBeat === 0) {
-        acceptedPull = true;
-        timingQuality = PULL_FIRST_HIT_QUALITY;
-        lastPullBeatAtRef.current = now;
-        pullPulseUntilRef.current = now + PULL_PULSE_MS;
-      } else if (interval < minAllowed) {
+      if (lastBeat > 0 && interval < minCooldown) {
         earlyPull = true;
         invalidPull = true;
         pullPulseUntilRef.current = 0;
-      } else if (interval <= maxAllowed) {
-        acceptedPull = true;
-        const offset = Math.abs(interval - PULL_BEAT_MS);
-        timingQuality = clamp(1 - offset / PULL_BEAT_TOLERANCE_MS, 0, 1);
-        lastPullBeatAtRef.current = now;
-        pullPulseUntilRef.current = now + PULL_PULSE_MS;
       } else {
-        // Too late counts as rhythm miss to discourage spam shaking.
-        invalidPull = true;
-        pullPulseUntilRef.current = 0;
+        const offset = Math.abs(interval - PULL_BEAT_MS);
+        if (lastBeat === 0 || offset <= PULL_BEAT_TOLERANCE_MS) {
+          acceptedPull = true;
+          timingQuality =
+            lastBeat === 0
+              ? PULL_FIRST_HIT_QUALITY
+              : clamp(1 - offset / PULL_BEAT_TOLERANCE_MS, 0.5, 1);
+          lastPullBeatAtRef.current = now;
+          pullPulseUntilRef.current = now + PULL_PULSE_MS;
+        } else {
+          // 박자를 크게 놓치면 MISS 처리하되, 다음 입력부터는 다시 리듬에 진입할 수 있게 리셋합니다.
+          earlyPull = true;
+          invalidPull = true;
+          pullPulseUntilRef.current = 0;
+          lastPullBeatAtRef.current = now;
+        }
       }
     }
     pullOverThresholdRef.current = overThreshold;

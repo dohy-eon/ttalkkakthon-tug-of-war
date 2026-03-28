@@ -300,9 +300,16 @@ function buildRankingWhereClause({ scope, nicknameQuery, scoreMin, scoreMax }) {
   return { whereSql, params };
 }
 
-function getSoloTopRanking({ scope = 'all', nicknameQuery = '', scoreMin, scoreMax, limit = 20, offset = 0 } = {}) {
+function getSoloTopRanking({
+  scope = 'all',
+  nicknameQuery = '',
+  scoreMin,
+  scoreMax,
+  limit = MAX_SOLO_RECORDS,
+  offset = 0,
+} = {}) {
   const normalizedScope = normalizeRankingScope(scope);
-  const safeLimit = clampInt(limit, 1, 50);
+  const safeLimit = clampInt(limit, 1, MAX_SOLO_RECORDS);
   const safeOffset = Math.max(0, Math.floor(Number(offset) || 0));
   const { whereSql, params } = buildRankingWhereClause({
     scope: normalizedScope,
@@ -687,7 +694,7 @@ io.on('connection', (socket) => {
       nicknameQuery: params?.nicknameQuery || '',
       scoreMin: params?.scoreMin,
       scoreMax: params?.scoreMax,
-      limit: params?.limit ?? 20,
+      limit: params?.limit ?? MAX_SOLO_RECORDS,
       offset: params?.offset ?? 0,
     }).map((r, idx) => ({
         rank: idx + 1,

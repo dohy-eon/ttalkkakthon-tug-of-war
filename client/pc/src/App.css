@@ -79,6 +79,91 @@ body {
   transform: translateY(0);
 }
 
+.btn-secondary {
+  padding: 16px 28px;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+  background: #334155;
+  border: none;
+  border-radius: 16px;
+  cursor: pointer;
+}
+
+.lobby-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.btn-chip {
+  flex: 1;
+  border-radius: 10px;
+  border: 1px solid #475569;
+  background: #1e293b;
+  color: var(--text-dim);
+  font-size: 14px;
+  font-weight: 700;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.btn-chip.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.btn-small {
+  padding: 10px 14px;
+  font-size: 14px;
+}
+
+.ranking-panel {
+  width: 100%;
+  max-width: 720px;
+  background: var(--surface);
+  border-radius: 14px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ranking-filter-row {
+  display: flex;
+  gap: 8px;
+}
+
+.ranking-input {
+  flex: 1;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  color: var(--text);
+  font-size: 14px;
+  padding: 10px 12px;
+  outline: none;
+}
+
+.ranking-list {
+  margin-top: 4px;
+  max-height: 340px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ranking-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 14px;
+}
+
 /* Game Layout */
 .game {
   justify-content: flex-start;
@@ -160,6 +245,24 @@ body {
   font-size: 14px;
 }
 
+.status-bar {
+  width: 100%;
+  max-width: 1200px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--surface);
+  padding: 10px 16px;
+  border-radius: 10px;
+  font-size: 14px;
+  color: var(--text-dim);
+}
+
+.fever-on {
+  color: var(--accent);
+  font-weight: 700;
+}
+
 /* Join Guide */
 .join-guide {
   text-align: center;
@@ -185,6 +288,18 @@ body {
   margin-bottom: 12px;
 }
 
+.qr-wrap {
+  margin-bottom: 12px;
+}
+
+.qr-wrap img {
+  width: 140px;
+  height: 140px;
+  border-radius: 8px;
+  background: white;
+  padding: 6px;
+}
+
 .or-text {
   font-size: 14px;
 }
@@ -194,6 +309,38 @@ body {
   font-size: 13px;
   margin-top: 8px;
   margin-bottom: 0 !important;
+}
+
+.countdown-text {
+  font-size: 36px;
+  font-weight: 900;
+  color: var(--accent);
+}
+
+.ready-list {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.ready-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.ready-item.ok {
+  border-color: rgba(16, 185, 129, 0.35);
+  color: var(--text);
 }
 
 /* Arena */
@@ -445,7 +592,8 @@ body {
     font-size: 14px;
   }
 
-  .btn-primary {
+  .btn-primary,
+  .btn-secondary {
     padding: 14px 32px;
     font-size: 16px;
   }

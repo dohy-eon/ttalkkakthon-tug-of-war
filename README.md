@@ -55,3 +55,25 @@ npm start
 - **서버**: Node.js, Express, Socket.io
 - **클라이언트**: React, Vite, Socket.io-client
 - **입력**: DeviceOrientation API (gamma)
+
+## MVP 모델 (기능명세 반영)
+
+기능명세서를 기준으로 현재 프로젝트의 MVP 범위를 재정의했습니다.
+
+- 상세 문서: `docs/MVP_MODEL.md`
+- 출시 우선 범위: **공통 기능 + 1인 모드 + 2인 모드**
+- 확장 범위(후속): **팀전, SYNC 시스템, 명예/불명예 전당(사진 업로드)**
+
+핵심 목표는 로그인 없이 즉시 플레이 가능한 흐름을 완성하고,
+센서 입력 기반 실시간 판정의 안정성을 먼저 확보하는 것입니다.
+
+## 데이터 저장
+
+- 1인 모드 랭킹은 SQLite로 영속 저장됩니다.
+- DB 파일 위치: `server/data/solo-ranking.db`
+- 서버 시작 시 스키마 마이그레이션이 자동 적용됩니다. (`schema_migrations` 테이블 기반)
+
+## 랭킹 조회 옵션
+
+- 범위 필터: `전체(all)` / `일간(daily)`
+- 검색 조건: 닉네임 부분 검색, 점수 범위(최소/최대)

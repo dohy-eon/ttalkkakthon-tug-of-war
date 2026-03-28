@@ -3,6 +3,8 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
+const Database = require('better-sqlite3');
 
 const app = express();
 app.use(cors());
@@ -13,6 +15,27 @@ const io = new Server(server, {
 });
 
 const rooms = {};
+
+const FORBIDDEN_WORDS = ['씨발', '병신', '개새', 'fuck', 'shit', 'bitch'];
+const MAX_SOLO_RECORDS = 300;
+const DUEL_DURATION_MS = 30000;
+const FEVER_THRESHOLD_MS = 5000;
+
+function normalizeName(raw) {
+  return String(raw || '').trim();
+}
+
+function validateNickname(raw) {
+  const name = normalizeName(raw);
+  if (!name) return { ok: false, message: '닉네임을 입력해주세요.' };
+  if (name.length < 2 || name.length > 10) {
+    return { ok: false, message: '닉네임은 2~10자여야 합니다.' };
+  }
+  if (FORBIDDEN_WORDS.some((word) => name.toLowerCase().includes(word))) {
+    return { ok: false, message: '사용할 수 없는 닉네임입니다.' };
+  }
+  return { ok: true, name };
+}
 
 function generateRoomId() {
   let id;
@@ -37,6 +60,273 @@ app.get('/', (_req, res) => {
 
 const TICK_RATE = 20; // 50ms per tick
 const K = 0.3;
+const LATEST_SCHEMA_VERSION = 3;
+
+const dataDir = path.join(__dirname, 'data');
+fs.mkdirSync(dataDir, { recursive: true });
+const dbPath = path.join(dataDir, 'solo-ranking.db');
+const db = new Database(dbPath);
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
+
+function hasColumn(tableName, columnName) {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all();
+  return columns.some((column) => column.name === columnName);
+}
+
+function runMigrations() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version INTEGER PRIMARY KEY,
+      applied_at INTEGER NOT NULL
+    );
+  `);
+
+  const currentVersion =
+    db.prepare('SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations').get()?.version ?? 0;
+
+  const migrations = [
+    {
+      version: 1,
+      up: () => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS solo_records (
+            id TEXT PRIMARY KEY,
+            nickname TEXT NOT NULL,
+            score INTEGER NOT NULL,
+            max_combo INTEGER NOT NULL,
+            accuracy REAL NOT NULL,
+            fever_score INTEGER NOT NULL,
+            created_at INTEGER NOT NULL
+          );
+        `);
+      },
+    },
+    {
+      version: 2,
+      up: () => {
+        db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_solo_records_score_created
+          ON solo_records(score DESC, created_at ASC);
+        `);
+        db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_solo_records_created_at
+          ON solo_records(created_at);
+        `);
+      },
+    },
+    {
+      version: 3,
+      up: () => {
+        if (!hasColumn('solo_records', 'normalized_nickname')) {
+          db.exec(`ALTER TABLE solo_records ADD COLUMN normalized_nickname TEXT`);
+        }
+        db.exec(`
+          UPDATE solo_records
+          SET normalized_nickname = lower(nickname)
+          WHERE normalized_nickname IS NULL OR normalized_nickname = '';
+        `);
+        db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_solo_records_normalized_nickname
+          ON solo_records(normalized_nickname);
+        `);
+      },
+    },
+  ];
+
+  for (const migration of migrations) {
+    if (migration.version <= currentVersion) continue;
+    const run = db.transaction(() => {
+      migration.up();
+      db.prepare('INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)').run(
+        migration.version,
+        Date.now()
+      );
+    });
+    run();
+    console.log(`[DB] migration applied: v${migration.version}`);
+  }
+
+  if (currentVersion < LATEST_SCHEMA_VERSION) {
+    console.log(`[DB] schema upgraded to v${LATEST_SCHEMA_VERSION}`);
+  }
+}
+
+runMigrations();
+
+const insertSoloStmt = db.prepare(`
+  INSERT INTO solo_records (
+    id,
+    nickname,
+    normalized_nickname,
+    score,
+    max_combo,
+    accuracy,
+    fever_score,
+    created_at
+  )
+  VALUES (
+    @id,
+    @nickname,
+    @normalizedNickname,
+    @score,
+    @maxCombo,
+    @accuracy,
+    @feverScore,
+    @createdAt
+  )
+`);
+
+const pruneSoloStmt = db.prepare(`
+  DELETE FROM solo_records
+  WHERE id IN (
+    SELECT id
+    FROM solo_records
+    ORDER BY score DESC, created_at ASC
+    LIMIT -1 OFFSET @limit
+  )
+`);
+
+function getDayStartTimestamp() {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+}
+
+function normalizeRankingScope(scope) {
+  return scope === 'daily' ? 'daily' : 'all';
+}
+
+function buildRankingWhereClause({ scope, nicknameQuery, scoreMin, scoreMax }) {
+  const where = [];
+  const params = {};
+
+  if (scope === 'daily') {
+    where.push('created_at >= @dayStart');
+    params.dayStart = getDayStartTimestamp();
+  }
+
+  const trimmedName = String(nicknameQuery || '').trim().toLowerCase();
+  if (trimmedName) {
+    where.push('normalized_nickname LIKE @nicknameLike');
+    params.nicknameLike = `%${trimmedName}%`;
+  }
+
+  const min = Number(scoreMin);
+  if (!Number.isNaN(min)) {
+    where.push('score >= @scoreMin');
+    params.scoreMin = Math.max(0, Math.floor(min));
+  }
+
+  const max = Number(scoreMax);
+  if (!Number.isNaN(max)) {
+    where.push('score <= @scoreMax');
+    params.scoreMax = Math.max(0, Math.floor(max));
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  return { whereSql, params };
+}
+
+function getSoloTopRanking({ scope = 'all', nicknameQuery = '', scoreMin, scoreMax, limit = 20, offset = 0 } = {}) {
+  const normalizedScope = normalizeRankingScope(scope);
+  const safeLimit = clampInt(limit, 1, 50);
+  const safeOffset = Math.max(0, Math.floor(Number(offset) || 0));
+  const { whereSql, params } = buildRankingWhereClause({
+    scope: normalizedScope,
+    nicknameQuery,
+    scoreMin,
+    scoreMax,
+  });
+  const stmt = db.prepare(`
+    SELECT id, nickname, score, max_combo AS maxCombo, accuracy, fever_score AS feverScore, created_at AS createdAt
+    FROM solo_records
+    ${whereSql}
+    ORDER BY score DESC, created_at ASC
+    LIMIT @limit OFFSET @offset
+  `);
+  return stmt.all({ ...params, limit: safeLimit, offset: safeOffset });
+}
+
+function saveSoloRecord(record) {
+  const transaction = db.transaction((payload) => {
+    insertSoloStmt.run(payload);
+    pruneSoloStmt.run({ limit: MAX_SOLO_RECORDS });
+  });
+  transaction(record);
+}
+
+function getSoloRank(record, { scope = 'all' } = {}) {
+  const normalizedScope = normalizeRankingScope(scope);
+  const { whereSql, params } = buildRankingWhereClause({ scope: normalizedScope });
+  const stmt = db.prepare(`
+    SELECT COUNT(*) + 1 AS rank
+    FROM solo_records
+    ${whereSql ? `${whereSql} AND` : 'WHERE'}
+      (score > @score OR (score = @score AND created_at < @createdAt))
+  `);
+  return stmt.get({ ...params, score: record.score, createdAt: record.createdAt }).rank;
+}
+
+function clampInt(value, min, max) {
+  const n = Math.floor(Number(value));
+  if (Number.isNaN(n)) return min;
+  return Math.max(min, Math.min(max, n));
+}
+
+function serializePlayers(room) {
+  return Object.entries(room.players).map(([socketId, p]) => ({
+    socketId,
+    name: p.name,
+    team: p.team,
+    ready: p.ready,
+    sensorGranted: p.sensorGranted,
+    calibrated: p.calibrated,
+    contribution: Math.round(p.contribution),
+    maxCombo: p.maxCombo,
+    avgAccuracy: p.accuracyCount > 0 ? Number((p.accuracySum / p.accuracyCount).toFixed(3)) : 0,
+  }));
+}
+
+function emitRoomState(roomId) {
+  const room = rooms[roomId];
+  if (!room) return;
+  io.to(roomId).emit('room_state', {
+    roomId,
+    started: room.started,
+    countdown: room.countdown,
+    teamACount: room.teamACount,
+    teamBCount: room.teamBCount,
+    playerCount: Object.keys(room.players).length,
+    players: serializePlayers(room),
+  });
+}
+
+function finishGame(roomId, winner, reason = 'line_reached') {
+  const room = rooms[roomId];
+  if (!room || room.winner) return;
+  room.winner = winner;
+  room.started = false;
+  room.countdown = null;
+  clearInterval(room.countdownInterval);
+  room.countdownInterval = null;
+
+  io.to(roomId).emit('game_over', {
+    winner,
+    reason,
+    position: room.position,
+    players: serializePlayers(room),
+  });
+  emitRoomState(roomId);
+}
+
+function handleForfeitIfNeeded(roomId) {
+  const room = rooms[roomId];
+  if (!room || !room.started || room.winner) return;
+  const teamAAlive = Object.values(room.players).some((p) => p.team === 'A');
+  const teamBAlive = Object.values(room.players).some((p) => p.team === 'B');
+  if (!teamAAlive && teamBAlive) finishGame(roomId, 'B', 'forfeit');
+  else if (!teamBAlive && teamAAlive) finishGame(roomId, 'A', 'forfeit');
+}
 
 io.on('connection', (socket) => {
   console.log(`Connected: ${socket.id}`);
@@ -44,18 +334,24 @@ io.on('connection', (socket) => {
   socket.on('create_room', (callback) => {
     const roomId = generateRoomId();
     rooms[roomId] = {
+      hostSocketId: socket.id,
       players: {},
       position: 0,
       teamACount: 0,
       teamBCount: 0,
       started: false,
       winner: null,
+      countdown: null,
+      countdownInterval: null,
+      startedAt: null,
+      gameEndsAt: null,
     };
     socket.join(roomId);
     socket.roomId = roomId;
     socket.isHost = true;
     console.log(`Room created: ${roomId}`);
     callback({ roomId });
+    emitRoomState(roomId);
   });
 
   socket.on('join_room', ({ roomId, name }, callback) => {
@@ -64,8 +360,13 @@ io.on('connection', (socket) => {
       callback({ error: '방을 찾을 수 없습니다.' });
       return;
     }
-    if (room.winner) {
-      callback({ error: '이미 종료된 게임입니다.' });
+    if (room.started || room.countdown) {
+      callback({ error: '이미 시작된 방입니다.' });
+      return;
+    }
+    const validation = validateNickname(name);
+    if (!validation.ok) {
+      callback({ error: validation.message });
       return;
     }
 
@@ -74,9 +375,19 @@ io.on('connection', (socket) => {
     else room.teamBCount++;
 
     room.players[socket.id] = {
-      name: name || `Player ${Object.keys(room.players).length + 1}`,
+      name: validation.name,
       team,
       force: 0,
+      accuracy: 0,
+      ready: false,
+      sensorGranted: false,
+      calibrated: false,
+      calibrationBaseline: 0,
+      contribution: 0,
+      combo: 0,
+      maxCombo: 0,
+      accuracySum: 0,
+      accuracyCount: 0,
     };
 
     socket.join(roomId);
@@ -85,30 +396,84 @@ io.on('connection', (socket) => {
 
     console.log(`Player ${socket.id} joined room ${roomId} as team ${team}`);
     callback({ team, name: room.players[socket.id].name });
-
-    io.to(roomId).emit('player_joined', {
-      playerCount: Object.keys(room.players).length,
-      teamACount: room.teamACount,
-      teamBCount: room.teamBCount,
-    });
+    emitRoomState(roomId);
   });
 
-  socket.on('force', ({ value }) => {
+  socket.on('set_ready', ({ sensorGranted, calibrated, baselineGamma }) => {
     const room = rooms[socket.roomId];
     if (!room || !room.players[socket.id]) return;
-    room.players[socket.id].force = Math.max(-1, Math.min(1, value));
+    room.players[socket.id].sensorGranted = !!sensorGranted;
+    room.players[socket.id].calibrated = !!calibrated;
+    room.players[socket.id].ready = !!sensorGranted && !!calibrated;
+    room.players[socket.id].calibrationBaseline = Number(baselineGamma) || 0;
+    emitRoomState(socket.roomId);
+  });
+
+  socket.on('force', ({ value, accuracy }) => {
+    const room = rooms[socket.roomId];
+    if (!room || !room.players[socket.id] || !room.started) return;
+
+    const player = room.players[socket.id];
+    const clampedForce = Math.max(-1, Math.min(1, Number(value) || 0));
+    const clampedAcc = Math.max(0, Math.min(1, Number(accuracy) || 0));
+    player.force = clampedForce;
+    player.accuracy = clampedAcc;
+    player.contribution += Math.abs(clampedForce);
+    player.accuracySum += clampedAcc;
+    player.accuracyCount += 1;
+
+    if (Math.abs(clampedForce) > 0.12 && clampedAcc > 0.3) {
+      player.combo += 1;
+      player.maxCombo = Math.max(player.maxCombo, player.combo);
+    } else {
+      player.combo = 0;
+    }
   });
 
   socket.on('start_game', () => {
     const room = rooms[socket.roomId];
     if (!room || !socket.isHost) return;
     if (Object.keys(room.players).length < 2) return;
+    if (room.countdown || room.started) return;
 
-    room.started = true;
-    room.position = 0;
-    room.winner = null;
-    io.to(socket.roomId).emit('game_started');
-    console.log(`Game started in room ${socket.roomId}`);
+    const everyoneReady = Object.values(room.players).every((p) => p.ready);
+    if (!everyoneReady) return;
+
+    room.countdown = 3;
+    io.to(socket.roomId).emit('game_countdown', { seconds: room.countdown });
+    emitRoomState(socket.roomId);
+
+    room.countdownInterval = setInterval(() => {
+      const currentRoom = rooms[socket.roomId];
+      if (!currentRoom) return;
+
+      currentRoom.countdown -= 1;
+      if (currentRoom.countdown > 0) {
+        io.to(socket.roomId).emit('game_countdown', { seconds: currentRoom.countdown });
+        emitRoomState(socket.roomId);
+        return;
+      }
+
+      clearInterval(currentRoom.countdownInterval);
+      currentRoom.countdownInterval = null;
+      currentRoom.countdown = null;
+      currentRoom.started = true;
+      currentRoom.position = 0;
+      currentRoom.winner = null;
+      currentRoom.startedAt = Date.now();
+      currentRoom.gameEndsAt = currentRoom.startedAt + DUEL_DURATION_MS;
+      Object.values(currentRoom.players).forEach((p) => {
+        p.force = 0;
+        p.contribution = 0;
+        p.combo = 0;
+        p.maxCombo = 0;
+        p.accuracySum = 0;
+        p.accuracyCount = 0;
+      });
+      io.to(socket.roomId).emit('game_started');
+      emitRoomState(socket.roomId);
+      console.log(`Game started in room ${socket.roomId}`);
+    }, 1000);
   });
 
   socket.on('reset_game', () => {
@@ -118,25 +483,100 @@ io.on('connection', (socket) => {
     room.position = 0;
     room.winner = null;
     room.started = false;
+    room.startedAt = null;
+    room.gameEndsAt = null;
+    room.countdown = null;
+    clearInterval(room.countdownInterval);
+    room.countdownInterval = null;
     Object.values(room.players).forEach((p) => (p.force = 0));
     io.to(socket.roomId).emit('game_reset');
+    emitRoomState(socket.roomId);
+  });
+
+  socket.on('get_solo_ranking', (payload, callback) => {
+    let params = payload;
+    let cb = callback;
+    if (typeof payload === 'function') {
+      cb = payload;
+      params = {};
+    }
+    if (typeof cb !== 'function') return;
+
+    const scope = normalizeRankingScope(params?.scope);
+    const top = getSoloTopRanking({
+      scope,
+      nicknameQuery: params?.nicknameQuery || '',
+      scoreMin: params?.scoreMin,
+      scoreMax: params?.scoreMax,
+      limit: params?.limit ?? 20,
+      offset: params?.offset ?? 0,
+    }).map((r, idx) => ({
+        rank: idx + 1,
+        nickname: r.nickname,
+        score: r.score,
+        maxCombo: r.maxCombo,
+        accuracy: r.accuracy,
+        feverScore: r.feverScore,
+        createdAt: r.createdAt,
+      }));
+    cb({ top, scope });
+  });
+
+  socket.on('submit_solo_result', (payload, callback) => {
+    const validation = validateNickname(payload?.nickname);
+    if (!validation.ok) {
+      callback({ error: validation.message });
+      return;
+    }
+
+    const score = Math.max(0, Math.floor(Number(payload?.score) || 0));
+    const maxCombo = Math.max(0, Math.floor(Number(payload?.maxCombo) || 0));
+    const accuracy = Math.max(0, Math.min(100, Number(payload?.accuracy) || 0));
+    const feverScore = Math.max(0, Math.floor(Number(payload?.feverScore) || 0));
+    const record = {
+      id: `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+      nickname: validation.name,
+      normalizedNickname: validation.name.toLowerCase(),
+      score,
+      maxCombo,
+      accuracy: Number(accuracy.toFixed(1)),
+      feverScore,
+      createdAt: Date.now(),
+    };
+
+    saveSoloRecord(record);
+    const rank = getSoloRank(record, { scope: 'all' });
+    const dailyRank = getSoloRank(record, { scope: 'daily' });
+    callback({ ok: true, rank, dailyRank });
   });
 
   socket.on('disconnect', () => {
     const room = rooms[socket.roomId];
-    if (room && room.players[socket.id]) {
+    if (!room) {
+      console.log(`Disconnected: ${socket.id}`);
+      return;
+    }
+
+    if (socket.isHost && room.hostSocketId === socket.id) {
+      io.to(socket.roomId).emit('room_closed', { reason: 'host_disconnected' });
+      clearInterval(room.countdownInterval);
+      delete rooms[socket.roomId];
+      console.log(`Room ${socket.roomId} deleted (host disconnected)`);
+      console.log(`Disconnected: ${socket.id}`);
+      return;
+    }
+
+    if (room.players[socket.id]) {
       const player = room.players[socket.id];
       if (player.team === 'A') room.teamACount--;
       else room.teamBCount--;
       delete room.players[socket.id];
 
-      io.to(socket.roomId).emit('player_joined', {
-        playerCount: Object.keys(room.players).length,
-        teamACount: room.teamACount,
-        teamBCount: room.teamBCount,
-      });
+      handleForfeitIfNeeded(socket.roomId);
+      emitRoomState(socket.roomId);
 
-      if (Object.keys(room.players).length === 0 && !socket.isHost) {
+      if (Object.keys(room.players).length === 0) {
+        clearInterval(room.countdownInterval);
         delete rooms[socket.roomId];
         console.log(`Room ${socket.roomId} deleted (empty)`);
       }
@@ -156,17 +596,19 @@ setInterval(() => {
 
     for (const player of Object.values(room.players)) {
       if (player.team === 'A') {
-        forceA += player.force;
+        forceA += player.force * (0.6 + player.accuracy * 0.4);
         countA++;
       } else {
-        forceB += player.force;
+        forceB += player.force * (0.6 + player.accuracy * 0.4);
         countB++;
       }
     }
 
     const avgA = countA > 0 ? forceA / countA : 0;
     const avgB = countB > 0 ? forceB / countB : 0;
-    const delta = (avgA - avgB) * K;
+    const timeLeftMs = Math.max(0, room.gameEndsAt - Date.now());
+    const fever = timeLeftMs <= FEVER_THRESHOLD_MS;
+    const delta = (avgA - avgB) * (fever ? K * 1.25 : K);
     room.position = Math.max(-100, Math.min(100, room.position + delta));
 
     let winner = null;
@@ -174,9 +616,14 @@ setInterval(() => {
     else if (room.position <= -100) winner = 'B';
 
     if (winner) {
-      room.winner = winner;
-      room.started = false;
-      io.to(roomId).emit('game_over', { winner });
+      finishGame(roomId, winner, 'line_reached');
+      continue;
+    }
+
+    if (timeLeftMs <= 0) {
+      const timeoutWinner = room.position > 0 ? 'A' : room.position < 0 ? 'B' : 'DRAW';
+      finishGame(roomId, timeoutWinner, 'timeout');
+      continue;
     }
 
     io.to(roomId).emit('game_state', {
@@ -185,6 +632,8 @@ setInterval(() => {
       forceB: avgB,
       teamACount: room.teamACount,
       teamBCount: room.teamBCount,
+      timeLeftMs,
+      fever,
     });
   }
 }, 1000 / TICK_RATE);
@@ -195,4 +644,8 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`PC:     http://localhost:${PORT}/pc`);
   console.log(`Mobile: http://localhost:${PORT}/mobile`);
   console.log(`\nUse a tunnel (e.g. npx localtunnel --port ${PORT}) for mobile HTTPS access`);
+});
+
+process.on('exit', () => {
+  db.close();
 });

@@ -757,7 +757,7 @@ body {
 .cheer-squad {
   position: absolute;
   inset: 0;
-  z-index: 2;
+  z-index: 5;
   pointer-events: none;
 }
 
@@ -839,7 +839,7 @@ body {
   position: absolute;
   width: var(--fan-size);
   height: var(--fan-size);
-  transform: translateX(-50%);
+  transform: translate(-50%, -50%);
   animation: cheerFanBob 2.4s ease-in-out infinite;
 }
 
@@ -906,10 +906,10 @@ body {
 @keyframes cheerFanBob {
   0%,
   100% {
-    transform: translateX(-50%) translateY(0);
+    transform: translate(-50%, -50%) translateY(0);
   }
   50% {
-    transform: translateX(-50%) translateY(-3px);
+    transform: translate(-50%, -50%) translateY(-3px);
   }
 }
 

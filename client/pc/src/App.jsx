@@ -18,24 +18,28 @@ const CHEER_FACE_SOURCES = [
   `${PC_BASE_URL}cheerleaders/face-10.png`,
 ];
 const CHEER_LAYOUT = [
-  { left: '6%', bottom: '8%', size: 56 },
-  { left: '16%', bottom: '18%', size: 60 },
-  { left: '28%', bottom: '10%', size: 54 },
-  { left: '40%', bottom: '20%', size: 58 },
-  { left: '48%', bottom: '8%', size: 52 },
-  { left: '54%', bottom: '8%', size: 52 },
-  { left: '62%', bottom: '20%', size: 58 },
-  { left: '74%', bottom: '10%', size: 54 },
-  { left: '84%', bottom: '18%', size: 60 },
-  { left: '94%', bottom: '8%', size: 56 },
+  { left: '86px', top: '14%', size: 52 },
+  { left: '86px', top: '28%', size: 56 },
+  { left: '86px', top: '42%', size: 54 },
+  { left: '86px', top: '56%', size: 56 },
+  { left: '86px', top: '70%', size: 52 },
+  { left: 'calc(100% - 86px)', top: '14%', size: 52 },
+  { left: 'calc(100% - 86px)', top: '28%', size: 56 },
+  { left: 'calc(100% - 86px)', top: '42%', size: 54 },
+  { left: 'calc(100% - 86px)', top: '56%', size: 56 },
+  { left: 'calc(100% - 86px)', top: '70%', size: 52 },
 ];
 const SIDELINE_CHEER_LAYOUT = [
-  { id: 'l1', side: 'left', top: '12%', depth: 0, delay: '0s', speed: 1.8 },
-  { id: 'l2', side: 'left', top: '34%', depth: 1, delay: '0.3s', speed: 2.2 },
-  { id: 'l3', side: 'left', top: '58%', depth: 0, delay: '0.55s', speed: 2.05 },
-  { id: 'r1', side: 'right', top: '16%', depth: 1, delay: '0.2s', speed: 1.95 },
-  { id: 'r2', side: 'right', top: '40%', depth: 0, delay: '0.45s', speed: 2.25 },
-  { id: 'r3', side: 'right', top: '64%', depth: 1, delay: '0.7s', speed: 2.1 },
+  { id: 'l1', side: 'left', top: '14%', depth: 0, delay: '0s', speed: 1.8 },
+  { id: 'l2', side: 'left', top: '28%', depth: 1, delay: '0.2s', speed: 2.05 },
+  { id: 'l3', side: 'left', top: '42%', depth: 0, delay: '0.38s', speed: 2.2 },
+  { id: 'l4', side: 'left', top: '56%', depth: 1, delay: '0.56s', speed: 1.95 },
+  { id: 'l5', side: 'left', top: '70%', depth: 0, delay: '0.74s', speed: 2.1 },
+  { id: 'r1', side: 'right', top: '14%', depth: 1, delay: '0.1s', speed: 1.9 },
+  { id: 'r2', side: 'right', top: '28%', depth: 0, delay: '0.28s', speed: 2.15 },
+  { id: 'r3', side: 'right', top: '42%', depth: 1, delay: '0.46s', speed: 2.25 },
+  { id: 'r4', side: 'right', top: '56%', depth: 0, delay: '0.64s', speed: 2.0 },
+  { id: 'r5', side: 'right', top: '70%', depth: 1, delay: '0.82s', speed: 2.12 },
 ];
 
 const createCheerFans = () =>
@@ -501,8 +505,8 @@ function App() {
     return (
       <div className="container lobby">
         <div className="logo-area">
-          <h1 className="title">TILT TUG</h1>
-          <p className="subtitle">모바일 기울기로 조작하는 줄다리기</p>
+          <h1 className="title">줄?다리기?</h1>
+          <p className="subtitle">모바일 기울기로 조작하는 줄?다리기?</p>
         </div>
         <div className="mode-selector">
           <button
@@ -725,7 +729,7 @@ function App() {
   return (
     <div className="container game">
       <header className="game-header">
-        <h1 className="title-small">TILT TUG</h1>
+        <h1 className="title-small">줄?다리기?</h1>
         <div className="room-badge">
           ROOM <span className="room-code">{roomId}</span>
         </div>
@@ -840,28 +844,6 @@ function App() {
             <div className="zone-center" />
             <div className="zone-b" />
           </div>
-          {phase === 'playing' && (
-            <div className="cheer-squad" aria-hidden="true">
-              {cheerFans.map((fan) => (
-                <div
-                  key={fan.id}
-                  className="cheer-fan"
-                  style={{ left: fan.left, bottom: fan.bottom, '--fan-size': `${fan.size}px` }}
-                >
-                  {fan.message && (
-                    <div
-                      key={fan.bubbleKey}
-                      className="cheer-bubble"
-                      style={{ animationDuration: `${fan.bubbleMs}ms` }}
-                    >
-                      {fan.message}
-                    </div>
-                  )}
-                  <img className="cheer-face" src={fan.faceSrc} alt="" />
-                </div>
-              ))}
-            </div>
-          )}
           <div
             className="rope-marker"
             style={{ left: `${50 + position * 0.5}%` }}
@@ -876,6 +858,28 @@ function App() {
         <div className="end-zone right">
           <span>B 승리</span>
         </div>
+        {phase === 'playing' && (
+          <div className="cheer-squad" aria-hidden="true">
+            {cheerFans.map((fan) => (
+              <div
+                key={fan.id}
+                className="cheer-fan"
+                style={{ left: fan.left, top: fan.top, '--fan-size': `${fan.size}px` }}
+              >
+                {fan.message && (
+                  <div
+                    key={fan.bubbleKey}
+                    className="cheer-bubble"
+                    style={{ animationDuration: `${fan.bubbleMs}ms` }}
+                  >
+                    {fan.message}
+                  </div>
+                )}
+                <img className="cheer-face" src={fan.faceSrc} alt="" />
+              </div>
+            ))}
+          </div>
+        )}
         {phase === 'playing' && (
           <div className="sideline-cheer-layer" aria-hidden="true">
             {SIDELINE_CHEER_LAYOUT.map((fan) => (

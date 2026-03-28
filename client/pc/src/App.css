@@ -765,7 +765,7 @@ body {
   bottom: 0;
   transform: translateX(-50%);
   z-index: 10;
-  transition: left 0.05s linear;
+  transition: left 0.3s ease-out;
 }
 
 .cheer-squad {

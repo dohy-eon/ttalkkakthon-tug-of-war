@@ -4,6 +4,7 @@ import './App.css';
 
 const SERVER_URL = window.location.origin;
 const CHEER_MESSAGES = ['와', '잘한다', '화이팅', '이겨라'];
+const CHEER_FACE_SKINS = ['#fde68a', '#fdba74', '#fca5a5', '#fbcfe8', '#c4b5fd', '#93c5fd'];
 const CHEER_LAYOUT = [
   { left: '6%', bottom: '8%', size: 56 },
   { left: '16%', bottom: '18%', size: 60 },
@@ -25,10 +26,30 @@ const SIDELINE_CHEER_LAYOUT = [
   { id: 'r3', side: 'right', top: '64%', depth: 1, delay: '0.7s', speed: 2.1 },
 ];
 
+function buildCheerFaceDataUri(index) {
+  const skin = CHEER_FACE_SKINS[index % CHEER_FACE_SKINS.length];
+  const shirt = index % 2 === 0 ? '#60a5fa' : '#f87171';
+  const blush = index % 2 === 0 ? '#93c5fd' : '#fca5a5';
+  const eyeOffset = 17 + (index % 3);
+  const mouthCurve = index % 2 === 0 ? 'Q30 44 39 36' : 'Q30 46 39 36';
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 60">
+      <rect x="0" y="0" width="60" height="60" rx="30" fill="${shirt}" />
+      <circle cx="30" cy="25" r="16" fill="${skin}" />
+      <circle cx="${30 - eyeOffset * 0.42}" cy="24" r="2.4" fill="#0f172a" />
+      <circle cx="${30 + eyeOffset * 0.42}" cy="24" r="2.4" fill="#0f172a" />
+      <path d="M21 37 ${mouthCurve}" stroke="#0f172a" stroke-width="2.6" fill="none" stroke-linecap="round" />
+      <circle cx="20" cy="31" r="2.6" fill="${blush}" opacity="0.82" />
+      <circle cx="40" cy="31" r="2.6" fill="${blush}" opacity="0.82" />
+    </svg>
+  `;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
 const createCheerFans = () =>
   CHEER_LAYOUT.map((layout, idx) => ({
     id: `fan-${idx}`,
-    faceSrc: `/cheerleaders/face-${String(idx + 1).padStart(2, '0')}.png`,
+    faceSrc: buildCheerFaceDataUri(idx),
     ...layout,
     message: '',
     bubbleKey: 0,

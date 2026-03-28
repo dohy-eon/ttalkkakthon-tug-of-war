@@ -10,6 +10,7 @@ const HORIZONTAL_GRAVITY_Z_MAX = 9.8;
 const PULL_TRIGGER_THRESHOLD = 0.58;
 const PULL_BEAT_MS = 450;
 const PULL_BEAT_TOLERANCE_MS = 210;
+const PULL_FIRST_HIT_QUALITY = 0.8;
 const PULL_PULSE_MS = 240;
 const HAPTIC_COOLDOWN_MS = 70;
 const BAD_WORDS = ['씨발', '병신', '개새', 'fuck', 'shit', 'bitch'];
@@ -457,34 +458,57 @@ function App() {
     const now = Date.now();
     const accuracy = getAccuracy();
     const tiltError = getTiltError();
-    if (tiltError > 70) return { value: 0, accuracy: 0, acceptedPull: false, earlyPull: false, timingQuality: 0 };
+    if (tiltError > 70) {
+      return {
+        value: 0,
+        accuracy: 0,
+        acceptedPull: false,
+        earlyPull: false,
+        invalidPull: false,
+        timingQuality: 0,
+      };
+    }
 
     const pullLevel = pullForceRef.current;
     const overThreshold = pullLevel >= PULL_TRIGGER_THRESHOLD;
+    const risingEdge = overThreshold && !pullOverThresholdRef.current;
     let acceptedPull = false;
     let earlyPull = false;
+    let invalidPull = false;
     let timingQuality = 0;
 
-    if (overThreshold) {
+    if (risingEdge) {
       const lastBeat = lastPullBeatAtRef.current;
-      const interval = lastBeat > 0 ? now - lastBeat : PULL_BEAT_MS;
       const minAllowed = PULL_BEAT_MS - PULL_BEAT_TOLERANCE_MS;
+      const maxAllowed = PULL_BEAT_MS + PULL_BEAT_TOLERANCE_MS;
+      const interval = lastBeat > 0 ? now - lastBeat : PULL_BEAT_MS;
 
-      if (interval >= minAllowed) {
+      if (lastBeat === 0) {
         acceptedPull = true;
-        const offset = Math.abs(interval - PULL_BEAT_MS);
-        timingQuality = lastBeat > 0 ? clamp(1 - offset / PULL_BEAT_TOLERANCE_MS, 0, 1) : 0.75;
+        timingQuality = PULL_FIRST_HIT_QUALITY;
         lastPullBeatAtRef.current = now;
         pullPulseUntilRef.current = now + PULL_PULSE_MS;
-      } else if (interval < Math.max(80, minAllowed * 0.55)) {
+      } else if (interval < minAllowed) {
         earlyPull = true;
+        invalidPull = true;
+        pullPulseUntilRef.current = 0;
+      } else if (interval <= maxAllowed) {
+        acceptedPull = true;
+        const offset = Math.abs(interval - PULL_BEAT_MS);
+        timingQuality = clamp(1 - offset / PULL_BEAT_TOLERANCE_MS, 0, 1);
+        lastPullBeatAtRef.current = now;
+        pullPulseUntilRef.current = now + PULL_PULSE_MS;
+      } else {
+        // Too late counts as rhythm miss to discourage spam shaking.
+        invalidPull = true;
+        pullPulseUntilRef.current = 0;
       }
     }
     pullOverThresholdRef.current = overThreshold;
 
     const isPulseWindow = now <= pullPulseUntilRef.current;
     const value = isPulseWindow ? clamp(pullLevel * accuracy, 0, 1) : 0;
-    return { value, accuracy, acceptedPull, earlyPull, timingQuality };
+    return { value, accuracy, acceptedPull, earlyPull, invalidPull, timingQuality };
   };
 
   useEffect(() => {
@@ -497,7 +521,7 @@ function App() {
       const directional = team === 'A' ? -output.value : output.value;
       const judgeInfo = output.acceptedPull
         ? getRhythmJudgeInfo(output.timingQuality, false)
-        : output.earlyPull
+        : output.invalidPull
           ? getRhythmJudgeInfo(0, true)
           : null;
       socketRef.current?.emit('force', {
@@ -514,7 +538,7 @@ function App() {
           timingQuality: output.timingQuality,
           fever: duelTimeLeftMs <= 5000,
         });
-      } else if (output.earlyPull) {
+      } else if (output.invalidPull) {
         updateComboFx(0);
         showRhythmJudge(0, true);
       }
@@ -604,7 +628,7 @@ function App() {
       const left = Math.max(0, soloEndAtRef.current - now);
       setSoloTimeLeftMs(left);
 
-      const { value, accuracy, acceptedPull, earlyPull, timingQuality } = getOutputForce();
+      const { value, accuracy, acceptedPull, invalidPull, timingQuality } = getOutputForce();
       const stats = soloStatsRef.current;
       stats.accuracySum += accuracy;
       stats.accuracyCount += 1;
@@ -630,10 +654,10 @@ function App() {
         });
       }
 
-      if (earlyPull) {
+      if (invalidPull) {
         stats.combo = 0;
         setSoloCombo(0);
-        setSoloGrade('INVALID');
+        setSoloGrade('MISS');
         updateComboFx(0);
         showRhythmJudge(0, true);
         return;
@@ -651,7 +675,7 @@ function App() {
       }
 
       // Use a continuous quality curve to avoid threshold cliffs around judge boundaries.
-      const quality = clamp(accuracy * 0.55 + magnitude * 0.25 + timingQuality * 0.2, 0, 1);
+      const quality = clamp(accuracy * 0.45 + magnitude * 0.2 + timingQuality * 0.35, 0, 1);
       const baseScore = Math.round(32 + Math.pow(quality, 1.15) * 88);
       const grade = quality >= 0.86 ? 'PERFECT' : quality >= 0.68 ? 'GOOD' : 'WEAK';
 
@@ -660,7 +684,7 @@ function App() {
       updateComboFx(stats.combo);
       const fever = left <= 5000;
       const comboMultiplier = 1 + Math.min(stats.combo, 20) * 0.04;
-      const rhythmMultiplier = 0.65 + timingQuality * 0.35;
+      const rhythmMultiplier = 0.4 + timingQuality * 0.6;
       const feverMultiplier = fever ? 1.35 : 1;
       const gained = Math.round(baseScore * accuracy * comboMultiplier * rhythmMultiplier * feverMultiplier);
       stats.score += gained;

@@ -3,6 +3,8 @@ import { io } from 'socket.io-client';
 import './App.css';
 
 const SERVER_URL = window.location.origin;
+const DECAY = 0.92;
+const ACCEL_SCALE = 0.12;
 
 function App() {
   const [phase, setPhase] = useState('join');
@@ -43,8 +45,8 @@ function App() {
         setPhase('waiting');
 
         if (
-          typeof DeviceOrientationEvent !== 'undefined' &&
-          typeof DeviceOrientationEvent.requestPermission === 'function'
+          typeof DeviceMotionEvent !== 'undefined' &&
+          typeof DeviceMotionEvent.requestPermission === 'function'
         ) {
           setNeedsPermission(true);
         } else {
@@ -72,19 +74,22 @@ function App() {
   }, [roomId, name]);
 
   const startSensor = () => {
-    window.addEventListener('deviceorientation', (e) => {
-      if (e.gamma !== null) {
-        const f = Math.max(-1, Math.min(1, e.gamma / 45));
-        forceRef.current = f;
-        setForce(f);
-      }
+    window.addEventListener('devicemotion', (e) => {
+      const accel = e.accelerationIncludingGravity;
+      if (!accel || accel.x === null) return;
+
+      const raw = accel.x * ACCEL_SCALE;
+      const smoothed = forceRef.current * DECAY + raw * (1 - DECAY);
+      const clamped = Math.max(-1, Math.min(1, smoothed));
+      forceRef.current = clamped;
+      setForce(clamped);
     });
     setNeedsPermission(false);
   };
 
   const requestPermission = async () => {
     try {
-      const result = await DeviceOrientationEvent.requestPermission();
+      const result = await DeviceMotionEvent.requestPermission();
       if (result === 'granted') {
         startSensor();
       } else {
@@ -115,7 +120,7 @@ function App() {
     return (
       <div className="container join-screen">
         <h1 className="title">TILT TUG</h1>
-        <p className="subtitle">폰을 기울여 줄다리기!</p>
+        <p className="subtitle">폰을 흔들어 줄다리기!</p>
 
         <div className="form">
           <input
@@ -159,14 +164,14 @@ function App() {
 
       {needsPermission && (
         <div className="permission-area">
-          <p>기울기 센서를 활성화해주세요</p>
+          <p>모션 센서를 활성화해주세요</p>
           <button className="btn-primary" onClick={requestPermission}>
             센서 허용
           </button>
         </div>
       )}
 
-      {!gameStarted && !winner && (
+      {!gameStarted && !winner && !needsPermission && (
         <div className="status-message">
           <div className="pulse-dot" />
           <p>게임 시작 대기 중...</p>
@@ -175,7 +180,7 @@ function App() {
 
       {gameStarted && (
         <div className="tilt-area">
-          <p className="tilt-instruction">📱 폰을 기울이세요!</p>
+          <p className="tilt-instruction">📱 폰을 좌우로 흔드세요!</p>
           <div className="force-display">
             <div className="force-gauge">
               <div className="force-center-mark" />
@@ -189,7 +194,7 @@ function App() {
             <p className="force-value">{Math.abs(force * 100).toFixed(0)}%</p>
           </div>
           <p className="tilt-hint">
-            {team === 'A' ? '⬅️ 왼쪽' : '오른쪽 ➡️'}으로 기울이면 힘이 커져요
+            {team === 'A' ? '⬅️ 왼쪽' : '오른쪽 ➡️'}으로 흔들면 힘이 커져요
           </p>
         </div>
       )}

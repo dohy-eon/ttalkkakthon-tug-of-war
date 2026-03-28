@@ -15,22 +15,8 @@ const io = new Server(server, {
 });
 
 const rooms = {};
-const soloLiveState = {
-  active: false,
-  sessionId: null,
-  nickname: '',
-  score: 0,
-  combo: 0,
-  maxCombo: 0,
-  accuracy: 0,
-  grade: '-',
-  fever: false,
-  timeLeftMs: 0,
-  updatedAt: 0,
-};
 
 const FORBIDDEN_WORDS = ['씨발', '병신', '개새', 'fuck', 'shit', 'bitch'];
-const MAX_SOLO_RECORDS = 300;
 const DUEL_DURATION_MS = 30000;
 const FEVER_THRESHOLD_MS = 5000;
 const ROOM_MODE_DUEL = 'duel';
@@ -119,19 +105,14 @@ app.get('/', (_req, res) => {
 
 const TICK_RATE = 20; // 50ms per tick
 const K = 0.3;
-const LATEST_SCHEMA_VERSION = 4;
+const LATEST_SCHEMA_VERSION = 1;
 
 const dataDir = path.join(__dirname, 'data');
 fs.mkdirSync(dataDir, { recursive: true });
-const dbPath = path.join(dataDir, 'solo-ranking.db');
+const dbPath = path.join(dataDir, 'game-data.db');
 const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
-
-function hasColumn(tableName, columnName) {
-  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all();
-  return columns.some((column) => column.name === columnName);
-}
 
 function runMigrations() {
   db.exec(`
@@ -147,52 +128,6 @@ function runMigrations() {
   const migrations = [
     {
       version: 1,
-      up: () => {
-        db.exec(`
-          CREATE TABLE IF NOT EXISTS solo_records (
-            id TEXT PRIMARY KEY,
-            nickname TEXT NOT NULL,
-            score INTEGER NOT NULL,
-            max_combo INTEGER NOT NULL,
-            accuracy REAL NOT NULL,
-            fever_score INTEGER NOT NULL,
-            created_at INTEGER NOT NULL
-          );
-        `);
-      },
-    },
-    {
-      version: 2,
-      up: () => {
-        db.exec(`
-          CREATE INDEX IF NOT EXISTS idx_solo_records_score_created
-          ON solo_records(score DESC, created_at ASC);
-        `);
-        db.exec(`
-          CREATE INDEX IF NOT EXISTS idx_solo_records_created_at
-          ON solo_records(created_at);
-        `);
-      },
-    },
-    {
-      version: 3,
-      up: () => {
-        if (!hasColumn('solo_records', 'normalized_nickname')) {
-          db.exec(`ALTER TABLE solo_records ADD COLUMN normalized_nickname TEXT`);
-        }
-        db.exec(`
-          UPDATE solo_records
-          SET normalized_nickname = lower(nickname)
-          WHERE normalized_nickname IS NULL OR normalized_nickname = '';
-        `);
-        db.exec(`
-          CREATE INDEX IF NOT EXISTS idx_solo_records_normalized_nickname
-          ON solo_records(normalized_nickname);
-        `);
-      },
-    },
-    {
-      version: 4,
       up: () => {
         db.exec(`
           CREATE TABLE IF NOT EXISTS fame_records (
@@ -233,39 +168,6 @@ function runMigrations() {
 
 runMigrations();
 
-const insertSoloStmt = db.prepare(`
-  INSERT INTO solo_records (
-    id,
-    nickname,
-    normalized_nickname,
-    score,
-    max_combo,
-    accuracy,
-    fever_score,
-    created_at
-  )
-  VALUES (
-    @id,
-    @nickname,
-    @normalizedNickname,
-    @score,
-    @maxCombo,
-    @accuracy,
-    @feverScore,
-    @createdAt
-  )
-`);
-
-const pruneSoloStmt = db.prepare(`
-  DELETE FROM solo_records
-  WHERE id IN (
-    SELECT id
-    FROM solo_records
-    ORDER BY score DESC, created_at ASC
-    LIMIT -1 OFFSET @limit
-  )
-`);
-
 const insertFameStmt = db.prepare(`
   INSERT INTO fame_records (
     id,
@@ -289,14 +191,6 @@ const insertFameStmt = db.prepare(`
 
 function normalizeFameType(type) {
   return type === 'shame' ? 'shame' : 'honor';
-}
-
-function saveSoloRecord(record) {
-  const transaction = db.transaction((payload) => {
-    insertSoloStmt.run(payload);
-    pruneSoloStmt.run({ limit: MAX_SOLO_RECORDS });
-  });
-  transaction(record);
 }
 
 function getFameRecords({ type = 'honor', limit = 30 } = {}) {
@@ -323,10 +217,6 @@ function clampInt(value, min, max) {
   const n = Math.floor(Number(value));
   if (Number.isNaN(n)) return min;
   return Math.max(min, Math.min(max, n));
-}
-
-function emitSoloLiveState() {
-  io.emit('solo_live_state', { ...soloLiveState });
 }
 
 function serializePlayers(room) {
@@ -691,44 +581,6 @@ io.on('connection', (socket) => {
     cb({ type, records });
   });
 
-  socket.on('submit_solo_result', (payload, callback) => {
-    const validation = validateNickname(payload?.nickname);
-    if (!validation.ok) {
-      callback({ error: validation.message });
-      return;
-    }
-
-    const score = Math.max(0, Math.floor(Number(payload?.score) || 0));
-    const maxCombo = Math.max(0, Math.floor(Number(payload?.maxCombo) || 0));
-    const accuracy = Math.max(0, Math.min(100, Number(payload?.accuracy) || 0));
-    const feverScore = Math.max(0, Math.floor(Number(payload?.feverScore) || 0));
-    const record = {
-      id: `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-      nickname: validation.name,
-      normalizedNickname: validation.name.toLowerCase(),
-      score,
-      maxCombo,
-      accuracy: Number(accuracy.toFixed(1)),
-      feverScore,
-      createdAt: Date.now(),
-    };
-
-    saveSoloRecord(record);
-    if (soloLiveState.sessionId && soloLiveState.nickname === validation.name) {
-      soloLiveState.active = false;
-      soloLiveState.score = score;
-      soloLiveState.combo = 0;
-      soloLiveState.maxCombo = Math.max(soloLiveState.maxCombo, maxCombo);
-      soloLiveState.accuracy = Number(accuracy.toFixed(1));
-      soloLiveState.grade = 'END';
-      soloLiveState.timeLeftMs = 0;
-      soloLiveState.updatedAt = Date.now();
-      emitSoloLiveState();
-    }
-
-    callback({ ok: true });
-  });
-
   socket.on('submit_fame_record', (payload, callback) => {
     const cb = typeof callback === 'function' ? callback : () => {};
     const validation = validateNickname(payload?.displayName);
@@ -760,58 +612,6 @@ io.on('connection', (socket) => {
     };
     insertFameStmt.run(record);
     cb({ ok: true, recordId: record.id });
-  });
-
-  socket.on('solo_live_start', (payload) => {
-    const validation = validateNickname(payload?.nickname);
-    if (!validation.ok) return;
-
-    soloLiveState.active = true;
-    soloLiveState.sessionId = String(payload?.sessionId || `${Date.now()}`);
-    soloLiveState.nickname = validation.name;
-    soloLiveState.score = 0;
-    soloLiveState.combo = 0;
-    soloLiveState.maxCombo = 0;
-    soloLiveState.accuracy = 0;
-    soloLiveState.grade = 'START';
-    soloLiveState.fever = false;
-    soloLiveState.timeLeftMs = DUEL_DURATION_MS;
-    soloLiveState.updatedAt = Date.now();
-    emitSoloLiveState();
-  });
-
-  socket.on('solo_live_update', (payload) => {
-    if (!soloLiveState.sessionId) return;
-    const sessionId = String(payload?.sessionId || '');
-    if (!sessionId || sessionId !== soloLiveState.sessionId) return;
-
-    soloLiveState.active = true;
-    soloLiveState.score = Math.max(0, Math.floor(Number(payload?.score) || 0));
-    soloLiveState.combo = Math.max(0, Math.floor(Number(payload?.combo) || 0));
-    soloLiveState.maxCombo = Math.max(0, Math.floor(Number(payload?.maxCombo) || 0));
-    soloLiveState.accuracy = Math.max(0, Math.min(100, Number(payload?.accuracy) || 0));
-    soloLiveState.grade = String(payload?.grade || '-').slice(0, 16);
-    soloLiveState.fever = !!payload?.fever;
-    soloLiveState.timeLeftMs = Math.max(0, Math.floor(Number(payload?.timeLeftMs) || 0));
-    soloLiveState.updatedAt = Date.now();
-    emitSoloLiveState();
-  });
-
-  socket.on('solo_live_end', (payload) => {
-    if (!soloLiveState.sessionId) return;
-    const sessionId = String(payload?.sessionId || '');
-    if (!sessionId || sessionId !== soloLiveState.sessionId) return;
-
-    soloLiveState.active = false;
-    soloLiveState.score = Math.max(0, Math.floor(Number(payload?.score) || soloLiveState.score));
-    soloLiveState.combo = 0;
-    soloLiveState.maxCombo = Math.max(0, Math.floor(Number(payload?.maxCombo) || soloLiveState.maxCombo));
-    soloLiveState.accuracy = Math.max(0, Math.min(100, Number(payload?.accuracy) || soloLiveState.accuracy));
-    soloLiveState.grade = 'END';
-    soloLiveState.fever = false;
-    soloLiveState.timeLeftMs = 0;
-    soloLiveState.updatedAt = Date.now();
-    emitSoloLiveState();
   });
 
   socket.on('disconnect', () => {

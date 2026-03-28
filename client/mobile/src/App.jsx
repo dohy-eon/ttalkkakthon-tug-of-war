@@ -14,7 +14,6 @@ const PULL_FIRST_HIT_QUALITY = 0.8;
 const PULL_PULSE_MS = 300;
 const HAPTIC_COOLDOWN_MS = 70;
 const BAD_WORDS = ['씨발', '병신', '개새', 'fuck', 'shit', 'bitch'];
-const SOLO_DURATION_MS = 30000;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -55,14 +54,6 @@ function App() {
 
   const [hallHonor, setHallHonor] = useState([]);
   const [hallShame, setHallShame] = useState([]);
-  const [soloCountdown, setSoloCountdown] = useState(3);
-  const [soloTimeLeftMs, setSoloTimeLeftMs] = useState(SOLO_DURATION_MS);
-  const [soloScore, setSoloScore] = useState(0);
-  const [soloCombo, setSoloCombo] = useState(0);
-  const [soloMaxCombo, setSoloMaxCombo] = useState(0);
-  const [soloAccuracy, setSoloAccuracy] = useState(0);
-  const [soloFeverScore, setSoloFeverScore] = useState(0);
-  const [soloGrade, setSoloGrade] = useState('');
   const [rhythmJudge, setRhythmJudge] = useState('');
   const [rhythmJudgeTone, setRhythmJudgeTone] = useState('good');
   const [judgeFxTick, setJudgeFxTick] = useState(0);
@@ -90,10 +81,6 @@ function App() {
   const baselineBetaRef = useRef(0);
   const baselineGammaRef = useRef(0);
   const emitForceIntervalRef = useRef(null);
-  const soloLoopRef = useRef(null);
-  const soloEndAtRef = useRef(0);
-  const soloSessionIdRef = useRef('');
-  const lastSoloLiveEmitAtRef = useRef(0);
   const lastPullBeatAtRef = useRef(0);
   const pullPulseUntilRef = useRef(0);
   const pullOverThresholdRef = useRef(false);
@@ -103,33 +90,18 @@ function App() {
   const perfectFxTimeoutRef = useRef(null);
   const comboRushTimeoutRef = useRef(null);
   const pullComboRef = useRef(0);
-  const soloStatsRef = useRef({
-    score: 0,
-    combo: 0,
-    maxCombo: 0,
-    feverScore: 0,
-    accuracySum: 0,
-    accuracyCount: 0,
-  });
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const room = params.get('room');
-    const entryMode = params.get('mode');
     if (room) setRoomId(room);
-    if (entryMode === 'solo') {
-      setMode('solo');
-      setScreen('solo_join');
-    } else {
-      setMode('duel');
-      setScreen('duel_join');
-    }
+    setMode('duel');
+    setScreen('duel_join');
   }, []);
 
   useEffect(() => {
     return () => {
       clearInterval(emitForceIntervalRef.current);
-      clearInterval(soloLoopRef.current);
       clearTimeout(judgeClearTimeoutRef.current);
       clearTimeout(perfectFxTimeoutRef.current);
       clearTimeout(comboRushTimeoutRef.current);
@@ -214,11 +186,6 @@ function App() {
     socket.on('game_reset', () => {
       setDuelWinner('');
       setDuelReason('');
-      setHonorImageDataUrl('');
-      setShameImageDataUrl('');
-      setFameConsent(false);
-      setHonorStatus('');
-      setShameStatus('');
       updateComboFx(0);
       setScreen('duel_wait');
     });
@@ -230,11 +197,6 @@ function App() {
       setJoinTeam('');
       setTeam('');
       setPlayers([]);
-      setHonorImageDataUrl('');
-      setShameImageDataUrl('');
-      setFameConsent(false);
-      setHonorStatus('');
-      setShameStatus('');
       updateComboFx(0);
     });
 
@@ -374,8 +336,8 @@ function App() {
     }
   };
 
-  const beginSensorFlow = (targetMode) => {
-    setMode(targetMode);
+  const beginSensorFlow = () => {
+    setMode('duel');
     resetSensorState();
     if (!checkSensorSupport()) {
       setError('지원되지 않는 브라우저/기기입니다.');
@@ -392,7 +354,6 @@ function App() {
   };
 
   const emitReadyIfDuel = () => {
-    if (mode !== 'duel') return;
     socketRef.current?.emit('set_ready', {
       sensorGranted: true,
       calibrated: true,
@@ -415,13 +376,7 @@ function App() {
     setCalibrated(true);
     emitReadyIfDuel();
     setError('');
-
-    if (mode === 'duel') {
-      setScreen('duel_wait');
-    } else {
-      setSoloCountdown(3);
-      setScreen('solo_countdown');
-    }
+    setScreen('duel_wait');
   };
 
   const getTiltError = () => {
@@ -531,159 +486,6 @@ function App() {
     return () => clearInterval(emitForceIntervalRef.current);
   }, [screen, mode, team, duelTimeLeftMs]);
 
-  useEffect(() => {
-    if (screen !== 'solo_countdown') return;
-    if (soloCountdown <= 0) {
-      setScreen('solo_play');
-      soloEndAtRef.current = Date.now() + SOLO_DURATION_MS;
-      soloSessionIdRef.current = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      lastSoloLiveEmitAtRef.current = 0;
-      soloStatsRef.current = {
-        score: 0,
-        combo: 0,
-        maxCombo: 0,
-        feverScore: 0,
-        accuracySum: 0,
-        accuracyCount: 0,
-      };
-      lastPullBeatAtRef.current = 0;
-      pullPulseUntilRef.current = 0;
-      pullOverThresholdRef.current = false;
-      setSoloTimeLeftMs(SOLO_DURATION_MS);
-      setSoloScore(0);
-      setSoloCombo(0);
-      setSoloMaxCombo(0);
-      setSoloAccuracy(0);
-      setSoloFeverScore(0);
-      setSoloGrade('');
-      const socket = ensureSocket();
-      socket.emit('solo_live_start', {
-        sessionId: soloSessionIdRef.current,
-        nickname: nickname.trim(),
-      });
-      return;
-    }
-
-    const timer = setTimeout(() => setSoloCountdown((prev) => prev - 1), 1000);
-    return () => clearTimeout(timer);
-  }, [screen, soloCountdown]);
-
-  const endSoloGame = async () => {
-    clearInterval(soloLoopRef.current);
-    const stats = soloStatsRef.current;
-    const avgAccuracy = stats.accuracyCount > 0 ? (stats.accuracySum / stats.accuracyCount) * 100 : 0;
-    setSoloAccuracy(Number(avgAccuracy.toFixed(1)));
-    const socket = ensureSocket();
-    socket.emit('solo_live_end', {
-      sessionId: soloSessionIdRef.current,
-      score: stats.score,
-      maxCombo: stats.maxCombo,
-      accuracy: Number(avgAccuracy.toFixed(1)),
-    });
-
-    try {
-      socket.emit('submit_solo_result', {
-        nickname: nickname.trim(),
-        score: stats.score,
-        maxCombo: stats.maxCombo,
-        accuracy: Number(avgAccuracy.toFixed(1)),
-        feverScore: stats.feverScore,
-      });
-    } catch {
-      // no-op
-    }
-
-    setScreen('solo_result');
-  };
-
-  useEffect(() => {
-    clearInterval(soloLoopRef.current);
-    if (screen !== 'solo_play') return;
-
-    soloLoopRef.current = setInterval(() => {
-      const now = Date.now();
-      const left = Math.max(0, soloEndAtRef.current - now);
-      setSoloTimeLeftMs(left);
-
-      const { value, accuracy, acceptedPull, invalidPull, timingQuality } = getOutputForce();
-      const stats = soloStatsRef.current;
-      stats.accuracySum += accuracy;
-      stats.accuracyCount += 1;
-
-      if (left <= 0) {
-        endSoloGame();
-        return;
-      }
-
-      const nowMs = Date.now();
-      if (nowMs - lastSoloLiveEmitAtRef.current >= 120) {
-        lastSoloLiveEmitAtRef.current = nowMs;
-        const avgAccuracyLive = stats.accuracyCount > 0 ? (stats.accuracySum / stats.accuracyCount) * 100 : 0;
-        ensureSocket().emit('solo_live_update', {
-          sessionId: soloSessionIdRef.current,
-          score: stats.score,
-          combo: stats.combo,
-          maxCombo: stats.maxCombo,
-          accuracy: Number(avgAccuracyLive.toFixed(1)),
-          grade: soloGrade || '-',
-          fever: left <= 5000,
-          timeLeftMs: left,
-        });
-      }
-
-      if (invalidPull) {
-        stats.combo = 0;
-        setSoloCombo(0);
-        setSoloGrade('MISS');
-        updateComboFx(0);
-        showRhythmJudge(0, true);
-        return;
-      }
-
-      if (!acceptedPull) return;
-
-      const magnitude = Math.abs(value);
-      if (accuracy < 0.33 || magnitude < 0.32) {
-        stats.combo = 0;
-        setSoloCombo(0);
-        setSoloGrade('WEAK');
-        updateComboFx(0);
-        return;
-      }
-
-      // Use a continuous quality curve to avoid threshold cliffs around judge boundaries.
-      const quality = clamp(accuracy * 0.45 + magnitude * 0.2 + timingQuality * 0.35, 0, 1);
-      const baseScore = Math.round(32 + Math.pow(quality, 1.15) * 88);
-      const grade = quality >= 0.86 ? 'PERFECT' : quality >= 0.68 ? 'GOOD' : 'WEAK';
-
-      stats.combo += 1;
-      stats.maxCombo = Math.max(stats.maxCombo, stats.combo);
-      updateComboFx(stats.combo);
-      const fever = left <= 5000;
-      const comboMultiplier = 1 + Math.min(stats.combo, 20) * 0.04;
-      const rhythmMultiplier = 0.4 + timingQuality * 0.6;
-      const feverMultiplier = fever ? 1.35 : 1;
-      const gained = Math.round(baseScore * accuracy * comboMultiplier * rhythmMultiplier * feverMultiplier);
-      stats.score += gained;
-      if (fever) stats.feverScore += gained;
-
-      showRhythmJudge(timingQuality, false);
-      triggerPullHaptic({
-        timingQuality,
-        fever,
-        strong: grade === 'PERFECT',
-      });
-
-      setSoloScore(stats.score);
-      setSoloCombo(stats.combo);
-      setSoloMaxCombo(stats.maxCombo);
-      setSoloFeverScore(stats.feverScore);
-      setSoloGrade(grade);
-    }, 50);
-
-    return () => clearInterval(soloLoopRef.current);
-  }, [screen]);
-
   const joinDuel = () => {
     const nickError = validateNickname(nickname);
     if (nickError) {
@@ -703,18 +505,8 @@ function App() {
       }
       setError('');
       setTeam(res.team);
-      beginSensorFlow('duel');
+      beginSensorFlow();
     });
-  };
-
-  const startSolo = () => {
-    const nickError = validateNickname(nickname);
-    if (nickError) {
-      setError(nickError);
-      return;
-    }
-    setError('');
-    beginSensorFlow('solo');
   };
 
   const fetchHallRecords = () => {
@@ -763,22 +555,20 @@ function App() {
     return '조정 필요';
   };
 
-  if (screen === 'duel_join' || screen === 'solo_join') {
+  if (screen === 'duel_join') {
     return (
       <div className="container">
-        <h2 className="title small">{screen === 'duel_join' ? '참가하기' : '1인 모드 시작'}</h2>
+        <h2 className="title small">참가하기</h2>
         <div className="form">
-          {screen === 'duel_join' && (
-            <input
-              className="input"
-              type="text"
-              inputMode="numeric"
-              maxLength={4}
-              placeholder="방 코드 (4자리)"
-              value={roomId}
-              onChange={(e) => setRoomId(e.target.value)}
-            />
-          )}
+          <input
+            className="input"
+            type="text"
+            inputMode="numeric"
+            maxLength={4}
+            placeholder="방 코드 (4자리)"
+            value={roomId}
+            onChange={(e) => setRoomId(e.target.value)}
+          />
           <input
             className="input"
             type="text"
@@ -787,38 +577,33 @@ function App() {
             value={nickname}
             onChange={(e) => setNickname(e.target.value)}
           />
-          {screen === 'duel_join' && (
-            <>
-              <p className="subtitle">팀 선택</p>
-              <div className="inline-row">
-                <button
-                  className={`btn-chip ${joinTeam === '' ? 'active' : ''}`}
-                  onClick={() => setJoinTeam('')}
-                >
-                  자동
-                </button>
-                <button
-                  className={`btn-chip ${joinTeam === 'A' ? 'active' : ''}`}
-                  onClick={() => setJoinTeam('A')}
-                >
-                  TEAM A
-                </button>
-                <button
-                  className={`btn-chip ${joinTeam === 'B' ? 'active' : ''}`}
-                  onClick={() => setJoinTeam('B')}
-                >
-                  TEAM B
-                </button>
-              </div>
-            </>
-          )}
+          <>
+            <p className="subtitle">팀 선택</p>
+            <div className="inline-row">
+              <button
+                className={`btn-chip ${joinTeam === '' ? 'active' : ''}`}
+                onClick={() => setJoinTeam('')}
+              >
+                자동
+              </button>
+              <button
+                className={`btn-chip ${joinTeam === 'A' ? 'active' : ''}`}
+                onClick={() => setJoinTeam('A')}
+              >
+                TEAM A
+              </button>
+              <button
+                className={`btn-chip ${joinTeam === 'B' ? 'active' : ''}`}
+                onClick={() => setJoinTeam('B')}
+              >
+                TEAM B
+              </button>
+            </div>
+          </>
           {error && <p className="error">{error}</p>}
-          <button className="btn-primary" onClick={screen === 'duel_join' ? joinDuel : startSolo}>
-            {screen === 'duel_join' ? '참가하기' : '시작하기'}
-          </button>
+          <button className="btn-primary" onClick={joinDuel}>참가하기</button>
           <button className="btn-secondary" onClick={fetchHallRecords}>전당 보기</button>
           <p className="subtitle">모드 선택은 PC에서 진행됩니다.</p>
-          {screen === 'solo_join' && <p className="subtitle">1인 모드는 PC 링크/QR로 진입할 수 있습니다.</p>}
         </div>
       </div>
     );
@@ -844,7 +629,7 @@ function App() {
               센서 허용
             </button>
           )}
-          <button className="btn-secondary" onClick={() => setScreen(mode === 'duel' ? 'duel_join' : 'solo_join')}>
+          <button className="btn-secondary" onClick={() => setScreen('duel_join')}>
             이전 화면
           </button>
         </div>
@@ -967,74 +752,6 @@ function App() {
         </div>
         <div className="form">
           <button className="btn-primary" onClick={leaveDuelSession}>
-            메인으로
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (screen === 'solo_countdown') {
-    return (
-      <div className="container">
-        <h2 className="title small">1인 모드 시작</h2>
-        <p className="count">{soloCountdown}</p>
-      </div>
-    );
-  }
-
-  if (screen === 'solo_play') {
-    const fever = soloTimeLeftMs <= 5000;
-    return (
-      <div className="container play">
-        {perfectFx && <div key={perfectFxTick} className="perfect-fx-overlay" />}
-        {comboRushFx && <div className="combo-rush-overlay" />}
-        <h2 className="title small">1인 모드</h2>
-        {!!rhythmJudge && (
-          <div key={judgeFxTick} className={`judge-pop ${rhythmJudgeTone}`}>
-            {rhythmJudge}
-          </div>
-        )}
-        {pullCombo >= 2 && (
-          <div key={comboFxTick} className={`combo-pop ${pullCombo >= 10 ? 'hot' : ''}`}>
-            {pullCombo} COMBO
-          </div>
-        )}
-        <div className="stats-row">
-          <span>시간 {Math.ceil(soloTimeLeftMs / 1000)}s</span>
-          <span className={fever ? 'fever' : ''}>{fever ? 'FEVER!' : 'NORMAL'}</span>
-        </div>
-        <div className="card">
-          <p>점수: {soloScore}</p>
-          <p>콤보: {soloCombo}</p>
-          <p>판정: {soloGrade || '-'}</p>
-          <p>팁: 0.5초 리듬으로 당기기</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (screen === 'solo_result') {
-    return (
-      <div className="container">
-        <h2 className="title small">1인 모드 결과</h2>
-        <div className="card">
-          <p>최종 점수: {soloScore}</p>
-          <p>최고 콤보: {soloMaxCombo}</p>
-          <p>평균 정확도: {soloAccuracy}%</p>
-          <p>피버 점수: {soloFeverScore}</p>
-        </div>
-        <div className="form">
-          <button
-            className="btn-primary"
-            onClick={() => {
-              setSoloCountdown(3);
-              setScreen('solo_countdown');
-            }}
-          >
-            다시하기
-          </button>
-          <button className="btn-secondary" onClick={() => setScreen('duel_join')}>
             메인으로
           </button>
         </div>

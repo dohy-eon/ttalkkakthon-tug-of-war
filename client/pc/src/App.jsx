@@ -86,18 +86,6 @@ function App() {
   const [honorCameraOpen, setHonorCameraOpen] = useState(false);
   const [shameCameraOpen, setShameCameraOpen] = useState(false);
   const [cheerFans, setCheerFans] = useState(createCheerFans);
-  const [soloLive, setSoloLive] = useState({
-    active: false,
-    nickname: '-',
-    score: 0,
-    combo: 0,
-    maxCombo: 0,
-    accuracy: 0,
-    grade: '-',
-    fever: false,
-    timeLeftMs: 0,
-    updatedAt: 0,
-  });
   const socketRef = useRef(null);
   const listenersBoundRef = useRef(false);
   const honorCameraVideoRef = useRef(null);
@@ -235,21 +223,6 @@ function App() {
       setPhase('closed');
     });
 
-    socket.on('solo_live_state', (state) => {
-      setSoloLive({
-        active: !!state?.active,
-        nickname: state?.nickname || '-',
-        score: state?.score ?? 0,
-        combo: state?.combo ?? 0,
-        maxCombo: state?.maxCombo ?? 0,
-        accuracy: state?.accuracy ?? 0,
-        grade: state?.grade || '-',
-        fever: !!state?.fever,
-        timeLeftMs: state?.timeLeftMs ?? 0,
-        updatedAt: state?.updatedAt ?? 0,
-      });
-    });
-
     listenersBoundRef.current = true;
   };
 
@@ -262,11 +235,6 @@ function App() {
   };
 
   const createRoom = () => {
-    if (selectedMode === 'solo') {
-      ensureSocket();
-      setPhase('solo_guide');
-      return;
-    }
     const socket = ensureSocket();
     socket.emit('create_room', { mode: selectedMode }, (data) => {
       setRoomId(data.roomId);
@@ -498,12 +466,6 @@ function App() {
         </div>
         <div className="mode-selector">
           <button
-            className={`btn-chip ${selectedMode === 'solo' ? 'active' : ''}`}
-            onClick={() => setSelectedMode('solo')}
-          >
-            1인
-          </button>
-          <button
             className={`btn-chip ${selectedMode === 'duel' ? 'active' : ''}`}
             onClick={() => setSelectedMode('duel')}
           >
@@ -517,62 +479,10 @@ function App() {
           </button>
         </div>
         <div className="lobby-actions">
-          <button className="btn-primary" onClick={createRoom}>
-            {selectedMode === 'solo' ? '1인 모드 안내 열기' : '방 만들기'}
-          </button>
+          <button className="btn-primary" onClick={createRoom}>방 만들기</button>
           <button className="btn-secondary" onClick={fetchHallRecords}>
             전당 보기
           </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (phase === 'solo_guide') {
-    const soloUrl = `${window.location.origin}/mobile?mode=solo`;
-    const soloQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(soloUrl)}`;
-
-    return (
-      <div className="container lobby">
-        <div className="logo-area">
-          <h1 className="title-small">1인 모드 안내</h1>
-          <p className="subtitle">모바일은 참가/준비 전용이며, 1인은 전용 링크로 진입합니다.</p>
-        </div>
-        <div className="join-guide">
-          <p>모바일에서 아래 주소로 접속하세요</p>
-          <div className="url-box">{soloUrl}</div>
-          <div className="qr-wrap">
-            <img src={soloQrUrl} alt="solo mode qr" />
-          </div>
-          <div className="lobby-actions">
-            <button className="btn-primary btn-small" onClick={() => window.open(soloUrl, '_blank')}>
-              링크 열기
-            </button>
-            <button className="btn-secondary btn-small" onClick={() => setPhase('lobby')}>
-              뒤로
-            </button>
-          </div>
-        </div>
-        <div className={`solo-live-panel ${soloLive.fever ? 'fever' : ''}`}>
-          <div className="solo-live-head">
-            <span>1인 모드 실시간 점수</span>
-            <span className={soloLive.active ? 'live-on' : 'live-off'}>
-              {soloLive.active ? 'LIVE' : 'IDLE'}
-            </span>
-          </div>
-          <div className="solo-live-main">
-            <div className="solo-live-score">{soloLive.score}</div>
-            <div className="solo-live-meta">
-              <p>플레이어: {soloLive.nickname}</p>
-              <p>콤보: {soloLive.combo} (최고 {soloLive.maxCombo})</p>
-              <p>정확도: {Number(soloLive.accuracy || 0).toFixed(1)}%</p>
-              <p>판정: {soloLive.grade}</p>
-              <p>남은 시간: {Math.ceil((soloLive.timeLeftMs || 0) / 1000)}s</p>
-            </div>
-          </div>
-          <p className="hint">
-            마지막 업데이트: {soloLive.updatedAt ? new Date(soloLive.updatedAt).toLocaleTimeString() : '-'}
-          </p>
         </div>
       </div>
     );

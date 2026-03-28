@@ -4,17 +4,18 @@ import './App.css';
 
 const SERVER_URL = window.location.origin;
 const CHEER_MESSAGES = ['와', '잘한다', '화이팅', '이겨라'];
+const PC_BASE_URL = import.meta.env.BASE_URL;
 const CHEER_FACE_SOURCES = [
-  '/cheerleaders/face-01.png',
-  '/cheerleaders/face-02.png',
-  '/cheerleaders/face-03.png',
-  '/cheerleaders/face-04.png',
-  '/cheerleaders/face-05.png',
-  '/cheerleaders/face-06.png',
-  '/cheerleaders/face-07.png',
-  '/cheerleaders/face-08.png',
-  '/cheerleaders/face-09.png',
-  '/cheerleaders/face-10.png',
+  `${PC_BASE_URL}cheerleaders/face-01.png`,
+  `${PC_BASE_URL}cheerleaders/face-02.png`,
+  `${PC_BASE_URL}cheerleaders/face-03.png`,
+  `${PC_BASE_URL}cheerleaders/face-04.png`,
+  `${PC_BASE_URL}cheerleaders/face-05.png`,
+  `${PC_BASE_URL}cheerleaders/face-06.png`,
+  `${PC_BASE_URL}cheerleaders/face-07.png`,
+  `${PC_BASE_URL}cheerleaders/face-08.png`,
+  `${PC_BASE_URL}cheerleaders/face-09.png`,
+  `${PC_BASE_URL}cheerleaders/face-10.png`,
 ];
 const CHEER_LAYOUT = [
   { left: '6%', bottom: '8%', size: 56 },

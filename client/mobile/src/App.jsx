@@ -51,9 +51,13 @@ function App() {
   const [duelWinner, setDuelWinner] = useState('');
   const [duelReason, setDuelReason] = useState('');
   const [duelMode, setDuelMode] = useState('duel');
-  const [fameImageDataUrl, setFameImageDataUrl] = useState('');
+  const [honorImageDataUrl, setHonorImageDataUrl] = useState('');
+  const [shameImageDataUrl, setShameImageDataUrl] = useState('');
   const [fameConsent, setFameConsent] = useState(false);
-  const [fameStatus, setFameStatus] = useState('');
+  const [honorStatus, setHonorStatus] = useState('');
+  const [shameStatus, setShameStatus] = useState('');
+  const [honorSubmitting, setHonorSubmitting] = useState(false);
+  const [shameSubmitting, setShameSubmitting] = useState(false);
 
   const [ranking, setRanking] = useState([]);
   const [rankResult, setRankResult] = useState(null);
@@ -105,6 +109,8 @@ function App() {
   const lastHapticAtRef = useRef(0);
   const judgeClearTimeoutRef = useRef(null);
   const perfectFxTimeoutRef = useRef(null);
+  const honorCaptureInputRef = useRef(null);
+  const shameCaptureInputRef = useRef(null);
   const soloStatsRef = useRef({
     score: 0,
     combo: 0,
@@ -193,6 +199,11 @@ function App() {
       setDuelReason('');
       setDuelTimeLeftMs(30000);
       setDuelFever(false);
+      setHonorImageDataUrl('');
+      setShameImageDataUrl('');
+      setHonorStatus('');
+      setShameStatus('');
+      setFameConsent(false);
       setScreen('duel_play');
     });
 
@@ -698,52 +709,86 @@ function App() {
     );
   };
 
-  const onFameImageChange = (event) => {
+  const submitFameRecord = (type, imageDataUrl) =>
+    new Promise((resolve) => {
+      if (!imageDataUrl) {
+        if (type === 'honor') setHonorStatus('사진을 먼저 촬영해주세요.');
+        else setShameStatus('사진을 먼저 촬영해주세요.');
+        resolve({ error: 'no_image' });
+        return;
+      }
+      if (type === 'shame' && !fameConsent) {
+        setShameStatus('불명예의 전당 등록은 동의가 필요합니다.');
+        resolve({ error: 'consent_required' });
+        return;
+      }
+
+      if (type === 'honor') setHonorSubmitting(true);
+      else setShameSubmitting(true);
+
+      ensureSocket().emit(
+        'submit_fame_record',
+        {
+          type,
+          mode: duelMode,
+          displayName: nickname.trim(),
+          imageDataUrl,
+        },
+        (res) => {
+          if (type === 'honor') {
+            setHonorSubmitting(false);
+            setHonorStatus(res?.error ? res.error : '명예의 전당 등록 완료!');
+          } else {
+            setShameSubmitting(false);
+            setShameStatus(res?.error ? res.error : '불명예의 전당 등록 완료!');
+          }
+          resolve(res || {});
+        }
+      );
+    });
+
+  const onFameImageChange = (type) => async (event) => {
     const file = event.target.files?.[0];
+    event.target.value = '';
     if (!file) return;
     if (!file.type.startsWith('image/')) {
-      setFameStatus('이미지 파일만 업로드할 수 있습니다.');
+      if (type === 'honor') setHonorStatus('사진 파일만 사용할 수 있습니다.');
+      else setShameStatus('사진 파일만 사용할 수 있습니다.');
       return;
     }
     if (file.size > 1_000_000) {
-      setFameStatus('이미지 용량은 1MB 이하를 권장합니다.');
+      if (type === 'honor') setHonorStatus('이미지 용량은 1MB 이하를 권장합니다.');
+      else setShameStatus('이미지 용량은 1MB 이하를 권장합니다.');
       return;
     }
 
     const reader = new FileReader();
-    reader.onload = () => {
-      setFameImageDataUrl(String(reader.result || ''));
-      setFameStatus('');
+    reader.onload = async () => {
+      const dataUrl = String(reader.result || '');
+      if (type === 'honor') {
+        setHonorImageDataUrl(dataUrl);
+        setHonorStatus('등록 중...');
+      } else {
+        setShameImageDataUrl(dataUrl);
+        setShameStatus('등록 중...');
+      }
+      await submitFameRecord(type, dataUrl);
     };
     reader.readAsDataURL(file);
   };
 
-  const submitFameRecord = (type) => {
-    if (!fameImageDataUrl) {
-      setFameStatus('이미지를 먼저 선택해주세요.');
+  const openFameCamera = (type) => {
+    if (type === 'honor') {
+      setHonorStatus('');
+      honorCaptureInputRef.current?.click();
       return;
     }
-    if (type === 'shame' && !fameConsent) {
-      setFameStatus('불명예의 전당 등록은 동의가 필요합니다.');
+    if (!fameConsent) {
+      setShameStatus('불명예의 전당 등록 동의를 먼저 체크해주세요.');
       return;
     }
-
-    ensureSocket().emit(
-      'submit_fame_record',
-      {
-        type,
-        mode: duelMode,
-        displayName: nickname.trim(),
-        imageDataUrl: fameImageDataUrl,
-      },
-      (res) => {
-        if (res?.error) {
-          setFameStatus(res.error);
-          return;
-        }
-        setFameStatus(type === 'honor' ? '명예의 전당 등록 완료!' : '불명예의 전당 등록 완료!');
-      }
-    );
+    setShameStatus('');
+    shameCaptureInputRef.current?.click();
   };
 
   const leaveDuelSession = () => {
@@ -757,9 +802,13 @@ function App() {
     setDuelWinner('');
     setDuelReason('');
     setDuelMode('duel');
-    setFameImageDataUrl('');
+    setHonorImageDataUrl('');
+    setShameImageDataUrl('');
     setFameConsent(false);
-    setFameStatus('');
+    setHonorStatus('');
+    setShameStatus('');
+    setHonorSubmitting(false);
+    setShameSubmitting(false);
     setScreen('duel_join');
   };
 
@@ -909,7 +958,6 @@ function App() {
   if (screen === 'duel_result') {
     const isWin = duelWinner === team;
     const isDraw = duelWinner === 'DRAW';
-    const fameType = isWin ? 'honor' : 'shame';
     return (
       <div className="container">
         <h2 className={`result ${isWin ? 'win' : 'lose'}`}>
@@ -925,21 +973,46 @@ function App() {
           ))}
         </div>
         {!isDraw && (
-          <div className="card">
-            <p>{isWin ? '명예의 전당 등록' : '불명예의 전당 등록'}</p>
-            <input className="input file-input" type="file" accept="image/*" onChange={onFameImageChange} />
-            {fameImageDataUrl && <img className="fame-preview" src={fameImageDataUrl} alt="fame preview" />}
-            {!isWin && (
+          <>
+            <div className="card">
+              <p>명예의 전당 촬영 (촬영 후 자동 등록)</p>
+              <input
+                ref={honorCaptureInputRef}
+                className="input file-input"
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={onFameImageChange('honor')}
+                style={{ display: 'none' }}
+              />
+              <button className="btn-secondary" onClick={() => openFameCamera('honor')} disabled={honorSubmitting}>
+                {honorImageDataUrl ? '명예 다시 촬영' : '명예 촬영'}
+              </button>
+              {honorImageDataUrl && <img className="fame-preview" src={honorImageDataUrl} alt="honor preview" />}
+              {honorStatus && <p className="subtitle">{honorStatus}</p>}
+            </div>
+            <div className="card">
+              <p>불명예의 전당 촬영 (촬영 후 자동 등록)</p>
+              <input
+                ref={shameCaptureInputRef}
+                className="input file-input"
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={onFameImageChange('shame')}
+                style={{ display: 'none' }}
+              />
               <label className="consent-row">
                 <input type="checkbox" checked={fameConsent} onChange={(e) => setFameConsent(e.target.checked)} />
                 <span>불명예의 전당 등록에 동의합니다.</span>
               </label>
-            )}
-            <button className="btn-primary" onClick={() => submitFameRecord(fameType)}>
-              {isWin ? '명예의 전당 등록' : '불명예의 전당 등록'}
-            </button>
-            {fameStatus && <p className="subtitle">{fameStatus}</p>}
-          </div>
+              <button className="btn-secondary" onClick={() => openFameCamera('shame')} disabled={shameSubmitting}>
+                {shameImageDataUrl ? '불명예 다시 촬영' : '불명예 촬영'}
+              </button>
+              {shameImageDataUrl && <img className="fame-preview" src={shameImageDataUrl} alt="shame preview" />}
+              {shameStatus && <p className="subtitle">{shameStatus}</p>}
+            </div>
+          </>
         )}
         <div className="form">
           <button className="btn-primary" onClick={leaveDuelSession}>

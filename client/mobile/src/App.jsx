@@ -7,7 +7,7 @@ const DECAY = 0.82;
 const PULL_SCALE = 0.4;
 const HORIZONTAL_GRAVITY_Z_MIN = 4.8;
 const HORIZONTAL_GRAVITY_Z_MAX = 9.8;
-const PULL_TRIGGER_THRESHOLD = 0.25;
+const PULL_TRIGGER_THRESHOLD = 0.5;
 const PULL_BEAT_MS = 450;
 const PULL_BEAT_TOLERANCE_MS = 250;
 const PULL_PULSE_MS = 240;
@@ -66,6 +66,8 @@ function App() {
   const [rankingNameQuery, setRankingNameQuery] = useState('');
   const [rankingScoreMin, setRankingScoreMin] = useState('');
   const [rankingScoreMax, setRankingScoreMax] = useState('');
+  const [hallHonor, setHallHonor] = useState([]);
+  const [hallShame, setHallShame] = useState([]);
   const [soloCountdown, setSoloCountdown] = useState(3);
   const [soloTimeLeftMs, setSoloTimeLeftMs] = useState(SOLO_DURATION_MS);
   const [soloScore, setSoloScore] = useState(0);
@@ -79,6 +81,9 @@ function App() {
   const [judgeFxTick, setJudgeFxTick] = useState(0);
   const [perfectFx, setPerfectFx] = useState(false);
   const [perfectFxTick, setPerfectFxTick] = useState(0);
+  const [pullCombo, setPullCombo] = useState(0);
+  const [comboFxTick, setComboFxTick] = useState(0);
+  const [comboRushFx, setComboRushFx] = useState(false);
 
   const [needsPermission, setNeedsPermission] = useState(false);
   const [permissionGranted, setPermissionGranted] = useState(false);
@@ -109,8 +114,10 @@ function App() {
   const lastHapticAtRef = useRef(0);
   const judgeClearTimeoutRef = useRef(null);
   const perfectFxTimeoutRef = useRef(null);
+  const comboRushTimeoutRef = useRef(null);
   const honorCaptureInputRef = useRef(null);
   const shameCaptureInputRef = useRef(null);
+  const pullComboRef = useRef(0);
   const soloStatsRef = useRef({
     score: 0,
     combo: 0,
@@ -140,6 +147,7 @@ function App() {
       clearInterval(soloLoopRef.current);
       clearTimeout(judgeClearTimeoutRef.current);
       clearTimeout(perfectFxTimeoutRef.current);
+      clearTimeout(comboRushTimeoutRef.current);
       if (socketRef.current) socketRef.current.disconnect();
       if (sensorStartedRef.current) {
         window.removeEventListener('devicemotion', onMotion);
@@ -204,6 +212,7 @@ function App() {
       setHonorStatus('');
       setShameStatus('');
       setFameConsent(false);
+      updateComboFx(0);
       setScreen('duel_play');
     });
 
@@ -222,9 +231,12 @@ function App() {
     socket.on('game_reset', () => {
       setDuelWinner('');
       setDuelReason('');
-      setFameImageDataUrl('');
+      setHonorImageDataUrl('');
+      setShameImageDataUrl('');
       setFameConsent(false);
-      setFameStatus('');
+      setHonorStatus('');
+      setShameStatus('');
+      updateComboFx(0);
       setScreen('duel_wait');
     });
 
@@ -234,9 +246,12 @@ function App() {
       setMode('duel');
       setTeam('');
       setPlayers([]);
-      setFameImageDataUrl('');
+      setHonorImageDataUrl('');
+      setShameImageDataUrl('');
       setFameConsent(false);
-      setFameStatus('');
+      setHonorStatus('');
+      setShameStatus('');
+      updateComboFx(0);
     });
 
     return socket;
@@ -259,10 +274,26 @@ function App() {
     lastHapticAtRef.current = 0;
     clearTimeout(judgeClearTimeoutRef.current);
     clearTimeout(perfectFxTimeoutRef.current);
+    clearTimeout(comboRushTimeoutRef.current);
     setRhythmJudge('');
     setJudgeFxTick(0);
     setPerfectFx(false);
     setPerfectFxTick(0);
+    setPullCombo(0);
+    setComboFxTick(0);
+    setComboRushFx(false);
+    pullComboRef.current = 0;
+  };
+
+  const updateComboFx = (nextCombo) => {
+    pullComboRef.current = nextCombo;
+    setPullCombo(nextCombo);
+    if (nextCombo > 1) setComboFxTick((v) => v + 1);
+    if (nextCombo >= 5) {
+      setComboRushFx(true);
+      clearTimeout(comboRushTimeoutRef.current);
+      comboRushTimeoutRef.current = setTimeout(() => setComboRushFx(false), 260);
+    }
   };
 
   const triggerPullHaptic = ({ timingQuality = 0, fever = false, strong = false } = {}) => {
@@ -478,12 +509,14 @@ function App() {
         judgeAt: judgeInfo ? Date.now() : undefined,
       });
       if (output.acceptedPull) {
+        updateComboFx(pullComboRef.current + 1);
         showRhythmJudge(output.timingQuality, false);
         triggerPullHaptic({
           timingQuality: output.timingQuality,
           fever: duelTimeLeftMs <= 5000,
         });
       } else if (output.earlyPull) {
+        updateComboFx(0);
         showRhythmJudge(0, true);
       }
     }, 50);
@@ -602,6 +635,7 @@ function App() {
         stats.combo = 0;
         setSoloCombo(0);
         setSoloGrade('INVALID');
+        updateComboFx(0);
         showRhythmJudge(0, true);
         return;
       }
@@ -613,6 +647,7 @@ function App() {
         stats.combo = 0;
         setSoloCombo(0);
         setSoloGrade('WEAK');
+        updateComboFx(0);
         return;
       }
 
@@ -628,6 +663,7 @@ function App() {
 
       stats.combo += 1;
       stats.maxCombo = Math.max(stats.maxCombo, stats.combo);
+      updateComboFx(stats.combo);
       const fever = left <= 5000;
       const comboMultiplier = 1 + Math.min(stats.combo, 20) * 0.05;
       const rhythmMultiplier = 0.7 + timingQuality * 0.3;
@@ -707,6 +743,17 @@ function App() {
       setScreen('ranking');
       }
     );
+  };
+
+  const fetchHallRecords = () => {
+    const socket = ensureSocket();
+    socket.emit('get_fame_records', { type: 'honor', limit: 24 }, (res) => {
+      setHallHonor(res?.records || []);
+      setScreen('hall');
+    });
+    socket.emit('get_fame_records', { type: 'shame', limit: 24 }, (res) => {
+      setHallShame(res?.records || []);
+    });
   };
 
   const submitFameRecord = (type, imageDataUrl) =>
@@ -850,6 +897,7 @@ function App() {
             {screen === 'duel_join' ? '참가하기' : '시작하기'}
           </button>
           <button className="btn-secondary" onClick={fetchRanking}>랭킹 보기</button>
+          <button className="btn-secondary" onClick={fetchHallRecords}>전당 보기</button>
           <p className="subtitle">모드 선택은 PC에서 진행됩니다.</p>
           {screen === 'solo_join' && <p className="subtitle">1인 모드는 PC 링크/QR로 진입할 수 있습니다.</p>}
         </div>
@@ -937,10 +985,16 @@ function App() {
     return (
       <div className="container play" style={{ borderTop: `4px solid ${teamColor}` }}>
         {perfectFx && <div key={perfectFxTick} className="perfect-fx-overlay" />}
+        {comboRushFx && <div className="combo-rush-overlay" />}
         <div className={`team-badge ${team === 'A' ? 'a' : 'b'}`}>TEAM {team}</div>
         {!!rhythmJudge && (
           <div key={judgeFxTick} className={`judge-pop ${rhythmJudgeTone}`}>
             {rhythmJudge}
+          </div>
+        )}
+        {pullCombo >= 2 && (
+          <div key={comboFxTick} className={`combo-pop ${pullCombo >= 10 ? 'hot' : ''}`}>
+            {pullCombo} COMBO
           </div>
         )}
         <div className="stats-row">
@@ -1034,10 +1088,16 @@ function App() {
     return (
       <div className="container play">
         {perfectFx && <div key={perfectFxTick} className="perfect-fx-overlay" />}
+        {comboRushFx && <div className="combo-rush-overlay" />}
         <h2 className="title small">1인 모드</h2>
         {!!rhythmJudge && (
           <div key={judgeFxTick} className={`judge-pop ${rhythmJudgeTone}`}>
             {rhythmJudge}
+          </div>
+        )}
+        {pullCombo >= 2 && (
+          <div key={comboFxTick} className={`combo-pop ${pullCombo >= 10 ? 'hot' : ''}`}>
+            {pullCombo} COMBO
           </div>
         )}
         <div className="stats-row">
@@ -1078,6 +1138,46 @@ function App() {
           </button>
           <button className="btn-secondary" onClick={fetchRanking}>
             랭킹 보기
+          </button>
+          <button className="btn-secondary" onClick={() => setScreen('duel_join')}>
+            메인으로
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (screen === 'hall') {
+    return (
+      <div className="container">
+        <h2 className="title small">명예/불명예 전당</h2>
+        <div className="card hall-card-wrap">
+          <p className="subtitle">명예의 전당</p>
+          <div className="hall-grid-mobile">
+            {hallHonor.length === 0 && <p className="subtitle">기록이 없습니다.</p>}
+            {hallHonor.map((item) => (
+              <article key={item.id} className="hall-item-mobile">
+                <img src={item.imageDataUrl} alt={`${item.displayName} honor`} />
+                <span>{item.displayName}</span>
+              </article>
+            ))}
+          </div>
+        </div>
+        <div className="card hall-card-wrap">
+          <p className="subtitle">불명예의 전당</p>
+          <div className="hall-grid-mobile">
+            {hallShame.length === 0 && <p className="subtitle">기록이 없습니다.</p>}
+            {hallShame.map((item) => (
+              <article key={item.id} className="hall-item-mobile">
+                <img src={item.imageDataUrl} alt={`${item.displayName} shame`} />
+                <span>{item.displayName}</span>
+              </article>
+            ))}
+          </div>
+        </div>
+        <div className="form">
+          <button className="btn-primary" onClick={fetchHallRecords}>
+            새로고침
           </button>
           <button className="btn-secondary" onClick={() => setScreen('duel_join')}>
             메인으로
@@ -1153,6 +1253,9 @@ function App() {
       </div>
       <button className="btn-secondary" onClick={() => setScreen('duel_join')}>
         메인으로
+      </button>
+      <button className="btn-secondary" onClick={fetchHallRecords}>
+        전당 보기
       </button>
     </div>
   );

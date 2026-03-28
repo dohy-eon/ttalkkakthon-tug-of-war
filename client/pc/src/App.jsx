@@ -3,6 +3,31 @@ import { io } from 'socket.io-client';
 import './App.css';
 
 const SERVER_URL = window.location.origin;
+const CHEER_MESSAGES = ['와', '잘한다', '화이팅', '이겨라'];
+const CHEER_LAYOUT = [
+  { left: '6%', bottom: '8%', size: 56 },
+  { left: '16%', bottom: '18%', size: 60 },
+  { left: '28%', bottom: '10%', size: 54 },
+  { left: '40%', bottom: '20%', size: 58 },
+  { left: '48%', bottom: '8%', size: 52 },
+  { left: '54%', bottom: '8%', size: 52 },
+  { left: '62%', bottom: '20%', size: 58 },
+  { left: '74%', bottom: '10%', size: 54 },
+  { left: '84%', bottom: '18%', size: 60 },
+  { left: '94%', bottom: '8%', size: 56 },
+];
+
+const createCheerFans = () =>
+  CHEER_LAYOUT.map((layout, idx) => ({
+    id: `fan-${idx}`,
+    faceSrc: `/cheerleaders/face-${String(idx + 1).padStart(2, '0')}.png`,
+    ...layout,
+    message: '',
+    bubbleKey: 0,
+    bubbleMs: 1400,
+    visibleUntil: 0,
+    nextAt: Date.now() + 400 + Math.floor(Math.random() * 2000),
+  }));
 
 function App() {
   const [phase, setPhase] = useState('lobby');
@@ -39,6 +64,8 @@ function App() {
   const [pcShameConsent, setPcShameConsent] = useState(false);
   const [pcFameStatus, setPcFameStatus] = useState('');
   const [pcRecentFame, setPcRecentFame] = useState([]);
+  const [honorCameraOpen, setHonorCameraOpen] = useState(false);
+  const [cheerFans, setCheerFans] = useState(createCheerFans);
   const [soloLive, setSoloLive] = useState({
     active: false,
     nickname: '-',
@@ -53,14 +80,48 @@ function App() {
   });
   const socketRef = useRef(null);
   const listenersBoundRef = useRef(false);
-  const honorCaptureInputRef = useRef(null);
   const shameCaptureInputRef = useRef(null);
+  const honorCameraVideoRef = useRef(null);
+  const honorCameraStreamRef = useRef(null);
 
   useEffect(() => {
     return () => {
+      stopHonorLiveCamera();
       if (socketRef.current) socketRef.current.disconnect();
     };
   }, []);
+
+  useEffect(() => {
+    if (phase !== 'playing') {
+      setCheerFans(createCheerFans());
+      return undefined;
+    }
+
+    const ticker = setInterval(() => {
+      const now = Date.now();
+      setCheerFans((prev) =>
+        prev.map((fan) => {
+          if (fan.message && now >= fan.visibleUntil) {
+            return { ...fan, message: '' };
+          }
+          if (!fan.message && now >= fan.nextAt) {
+            const bubbleMs = 1200 + Math.floor(Math.random() * 1400);
+            return {
+              ...fan,
+              message: CHEER_MESSAGES[Math.floor(Math.random() * CHEER_MESSAGES.length)],
+              bubbleKey: fan.bubbleKey + 1,
+              bubbleMs,
+              visibleUntil: now + bubbleMs,
+              nextAt: now + bubbleMs + 700 + Math.floor(Math.random() * 2500),
+            };
+          }
+          return fan;
+        })
+      );
+    }, 220);
+
+    return () => clearInterval(ticker);
+  }, [phase]);
 
   const bindSocketListeners = (socket) => {
     if (listenersBoundRef.current) return;
@@ -115,6 +176,7 @@ function App() {
     });
 
     socket.on('game_over', (data) => {
+      stopHonorLiveCamera();
       setWinner(data.winner);
       setEndReason(data.reason || '');
       setPlayers(data.players || []);
@@ -126,6 +188,7 @@ function App() {
     });
 
     socket.on('game_reset', () => {
+      stopHonorLiveCamera();
       setPosition(0);
       setWinner(null);
       setEndReason('');
@@ -197,6 +260,7 @@ function App() {
   };
 
   const resetGame = () => {
+    stopHonorLiveCamera();
     if (socketRef.current) {
       socketRef.current.disconnect();
       socketRef.current = null;
@@ -277,6 +341,64 @@ function App() {
       reader.readAsDataURL(file);
     });
 
+  const stopHonorLiveCamera = () => {
+    if (honorCameraStreamRef.current) {
+      honorCameraStreamRef.current.getTracks().forEach((track) => track.stop());
+      honorCameraStreamRef.current = null;
+    }
+    if (honorCameraVideoRef.current) {
+      honorCameraVideoRef.current.srcObject = null;
+    }
+    setHonorCameraOpen(false);
+  };
+
+  const openHonorLiveCamera = async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setPcFameStatus('이 브라우저는 카메라 촬영을 지원하지 않습니다.');
+      return;
+    }
+    try {
+      stopHonorLiveCamera();
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' },
+        audio: false,
+      });
+      honorCameraStreamRef.current = stream;
+      if (honorCameraVideoRef.current) {
+        honorCameraVideoRef.current.srcObject = stream;
+        await honorCameraVideoRef.current.play();
+      }
+      setPcFameStatus('');
+      setHonorCameraOpen(true);
+    } catch (error) {
+      setPcFameStatus('카메라 권한을 허용한 뒤 다시 시도해주세요.');
+    }
+  };
+
+  const captureHonorLivePhoto = () => {
+    const video = honorCameraVideoRef.current;
+    if (!video || !honorCameraStreamRef.current) {
+      setPcFameStatus('카메라를 먼저 실행해주세요.');
+      return;
+    }
+    if (!video.videoWidth || !video.videoHeight) {
+      setPcFameStatus('카메라 준비 중입니다. 잠시 후 다시 시도해주세요.');
+      return;
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      setPcFameStatus('촬영 중 오류가 발생했습니다.');
+      return;
+    }
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const imageDataUrl = canvas.toDataURL('image/jpeg', 0.92);
+    stopHonorLiveCamera();
+    submitPcFameRecord('honor', imageDataUrl);
+  };
+
   const submitPcFameRecord = (type, imageDataUrl) => {
     if (!imageDataUrl) {
       setPcFameStatus(type === 'honor' ? '명예 사진을 먼저 선택해주세요.' : '불명예 사진을 먼저 선택해주세요.');
@@ -320,11 +442,15 @@ function App() {
   };
 
   const openPcCapture = (type) => {
+    if (type === 'honor') {
+      openHonorLiveCamera();
+      return;
+    }
     if (type === 'shame' && !pcShameConsent) {
       setPcFameStatus('불명예 등록은 동의가 필요합니다.');
       return;
     }
-    const inputRef = type === 'honor' ? honorCaptureInputRef : shameCaptureInputRef;
+    const inputRef = shameCaptureInputRef;
     if (!inputRef.current) return;
     inputRef.current.value = '';
     inputRef.current.click();
@@ -693,6 +819,28 @@ function App() {
             <div className="zone-center" />
             <div className="zone-b" />
           </div>
+          {phase === 'playing' && (
+            <div className="cheer-squad" aria-hidden="true">
+              {cheerFans.map((fan) => (
+                <div
+                  key={fan.id}
+                  className="cheer-fan"
+                  style={{ left: fan.left, bottom: fan.bottom, '--fan-size': `${fan.size}px` }}
+                >
+                  {fan.message && (
+                    <div
+                      key={fan.bubbleKey}
+                      className="cheer-bubble"
+                      style={{ animationDuration: `${fan.bubbleMs}ms` }}
+                    >
+                      {fan.message}
+                    </div>
+                  )}
+                  <img className="cheer-face" src={fan.faceSrc} alt="" />
+                </div>
+              ))}
+            </div>
+          )}
           <div
             className="rope-marker"
             style={{ left: `${50 + position * 0.5}%` }}
@@ -722,17 +870,22 @@ function App() {
               <div className="pc-fame-wrap">
                 <div className="pc-fame-col honor">
                   <p>명예의 전당 (승리팀)</p>
-                  <input
-                    ref={honorCaptureInputRef}
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    style={{ display: 'none' }}
-                    onChange={(e) => handlePcCaptureChange('honor', e.target.files?.[0], honorCaptureInputRef)}
-                  />
                   <button className="btn-primary btn-small" onClick={() => openPcCapture('honor')}>
-                    명예 촬영 등록
+                    {honorCameraOpen ? '카메라 다시 열기' : '명예 실시간 촬영'}
                   </button>
+                  {honorCameraOpen && (
+                    <div className="pc-live-capture">
+                      <video ref={honorCameraVideoRef} autoPlay playsInline muted />
+                      <div className="pc-live-capture-actions">
+                        <button className="btn-primary btn-small" onClick={captureHonorLivePhoto}>
+                          촬영 후 등록
+                        </button>
+                        <button className="btn-secondary btn-small" onClick={stopHonorLiveCamera}>
+                          취소
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div className="pc-fame-col shame">
                   <p>불명예의 전당 (패배팀)</p>

@@ -287,6 +287,31 @@ body,
   animation: perfectFlash 0.26s ease-out;
 }
 
+.combo-rush-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background: radial-gradient(circle at 50% 50%, rgba(251, 191, 36, 0.24), rgba(251, 191, 36, 0) 62%);
+  animation: comboRush 0.26s ease-out;
+}
+
+.combo-pop {
+  font-size: clamp(20px, 6.4vw, 34px);
+  font-weight: 900;
+  letter-spacing: 1.2px;
+  color: #fbbf24;
+  text-shadow: 0 0 14px rgba(251, 191, 36, 0.92);
+  animation: comboPop 0.28s ease-out;
+  position: relative;
+  z-index: 1;
+}
+
+.combo-pop.hot {
+  color: #f97316;
+  text-shadow: 0 0 18px rgba(249, 115, 22, 0.95);
+}
+
 .perfect-fx-overlay::before,
 .perfect-fx-overlay::after {
   content: '';
@@ -343,6 +368,65 @@ body,
     opacity: 0;
     transform: translateY(-12px) scale(1.2);
   }
+}
+
+@keyframes comboPop {
+  0% {
+    opacity: 0;
+    transform: translateY(10px) scale(0.86);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(0) scale(1.08);
+  }
+  100% {
+    opacity: 0.98;
+    transform: translateY(-2px) scale(1);
+  }
+}
+
+@keyframes comboRush {
+  0% {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  35% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.04);
+  }
+}
+
+.hall-card-wrap {
+  width: 100%;
+}
+
+.hall-grid-mobile {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.hall-item-mobile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hall-item-mobile img {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: 8px;
+}
+
+.hall-item-mobile span {
+  font-size: 11px;
+  color: var(--text-dim);
 }
 
 .team-badge,

@@ -956,13 +956,10 @@ function App() {
   }
 
   if (screen === 'duel_result') {
-    const isWin = duelWinner === team;
     const isDraw = duelWinner === 'DRAW';
     return (
       <div className="container">
-        <h2 className={`result ${isWin ? 'win' : 'lose'}`}>
-          {duelWinner === 'DRAW' ? '무승부' : isWin ? '승리!' : '패배'}
-        </h2>
+        <h2 className="result">?</h2>
         <p className="subtitle">종료 사유: {duelReason || 'normal'}</p>
         <div className="card list">
           {players.map((p) => (

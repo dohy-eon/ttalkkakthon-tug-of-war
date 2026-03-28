@@ -10,8 +10,6 @@ function App() {
   const [roomMode, setRoomMode] = useState('duel');
   const [roomId, setRoomId] = useState('');
   const [position, setPosition] = useState(0);
-  const [forceA, setForceA] = useState(0);
-  const [forceB, setForceB] = useState(0);
   const [teamACount, setTeamACount] = useState(0);
   const [teamBCount, setTeamBCount] = useState(0);
   const [playerCount, setPlayerCount] = useState(0);
@@ -38,8 +36,6 @@ function App() {
   const [rankingScoreMax, setRankingScoreMax] = useState('');
   const [hallHonor, setHallHonor] = useState([]);
   const [hallShame, setHallShame] = useState([]);
-  const [pcHonorImage, setPcHonorImage] = useState('');
-  const [pcShameImage, setPcShameImage] = useState('');
   const [pcShameConsent, setPcShameConsent] = useState(false);
   const [pcFameStatus, setPcFameStatus] = useState('');
   const [pcRecentFame, setPcRecentFame] = useState([]);
@@ -57,6 +53,8 @@ function App() {
   });
   const socketRef = useRef(null);
   const listenersBoundRef = useRef(false);
+  const honorCaptureInputRef = useRef(null);
+  const shameCaptureInputRef = useRef(null);
 
   useEffect(() => {
     return () => {
@@ -101,8 +99,6 @@ function App() {
 
     socket.on('game_state', (state) => {
       setPosition(state.position);
-      setForceA(state.forceA);
-      setForceB(state.forceB);
       setTeamACount(state.teamACount);
       setTeamBCount(state.teamBCount);
       setTimeLeftMs(state.timeLeftMs ?? 0);
@@ -122,8 +118,6 @@ function App() {
       setWinner(data.winner);
       setEndReason(data.reason || '');
       setPlayers(data.players || []);
-      setPcHonorImage('');
-      setPcShameImage('');
       setPcShameConsent(false);
       setPcFameStatus('');
       setPcRecentFame([]);
@@ -133,8 +127,6 @@ function App() {
 
     socket.on('game_reset', () => {
       setPosition(0);
-      setForceA(0);
-      setForceB(0);
       setWinner(null);
       setEndReason('');
       setCountdown(null);
@@ -149,8 +141,6 @@ function App() {
       setGainA(0);
       setGainB(0);
       setPlayerJudges([]);
-      setPcHonorImage('');
-      setPcShameImage('');
       setPcShameConsent(false);
       setPcFameStatus('');
       setPcRecentFame([]);
@@ -207,7 +197,35 @@ function App() {
   };
 
   const resetGame = () => {
-    socketRef.current?.emit('reset_game');
+    if (socketRef.current) {
+      socketRef.current.disconnect();
+      socketRef.current = null;
+      listenersBoundRef.current = false;
+    }
+    setRoomId('');
+    setPosition(0);
+    setWinner(null);
+    setEndReason('');
+    setCountdown(null);
+    setTimeLeftMs(30000);
+    setFever(false);
+    setScoreA(0);
+    setScoreB(0);
+    setComboA(0);
+    setComboB(0);
+    setMaxComboA(0);
+    setMaxComboB(0);
+    setGainA(0);
+    setGainB(0);
+    setPlayerCount(0);
+    setTeamACount(0);
+    setTeamBCount(0);
+    setPlayers([]);
+    setPlayerJudges([]);
+    setPcShameConsent(false);
+    setPcFameStatus('');
+    setPcRecentFame([]);
+    setPhase('lobby');
   };
 
   const fetchRanking = (overrides = {}) => {
@@ -239,26 +257,27 @@ function App() {
     });
   };
 
-  const readImageAsDataUrl = (file, onLoaded) => {
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      setPcFameStatus('이미지 파일만 업로드할 수 있습니다.');
-      return;
-    }
-    if (file.size > 1_000_000) {
-      setPcFameStatus('이미지 용량은 1MB 이하를 권장합니다.');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      onLoaded(String(reader.result || ''));
-      setPcFameStatus('');
-    };
-    reader.readAsDataURL(file);
-  };
+  const readImageAsDataUrl = (file) =>
+    new Promise((resolve, reject) => {
+      if (!file) {
+        reject('촬영된 이미지가 없습니다.');
+        return;
+      }
+      if (!file.type.startsWith('image/')) {
+        reject('이미지 파일만 업로드할 수 있습니다.');
+        return;
+      }
+      if (file.size > 1_000_000) {
+        reject('이미지 용량은 1MB 이하를 권장합니다.');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject('이미지 처리 중 오류가 발생했습니다.');
+      reader.readAsDataURL(file);
+    });
 
-  const submitPcFameRecord = (type) => {
-    const imageDataUrl = type === 'honor' ? pcHonorImage : pcShameImage;
+  const submitPcFameRecord = (type, imageDataUrl) => {
     if (!imageDataUrl) {
       setPcFameStatus(type === 'honor' ? '명예 사진을 먼저 선택해주세요.' : '불명예 사진을 먼저 선택해주세요.');
       return;
@@ -298,6 +317,29 @@ function App() {
         setPcFameStatus(type === 'honor' ? '명예의 전당 등록 완료!' : '불명예의 전당 등록 완료!');
       }
     );
+  };
+
+  const openPcCapture = (type) => {
+    if (type === 'shame' && !pcShameConsent) {
+      setPcFameStatus('불명예 등록은 동의가 필요합니다.');
+      return;
+    }
+    const inputRef = type === 'honor' ? honorCaptureInputRef : shameCaptureInputRef;
+    if (!inputRef.current) return;
+    inputRef.current.value = '';
+    inputRef.current.click();
+  };
+
+  const handlePcCaptureChange = async (type, file, inputRef) => {
+    try {
+      const imageDataUrl = await readImageAsDataUrl(file);
+      setPcFameStatus('');
+      submitPcFameRecord(type, imageDataUrl);
+    } catch (error) {
+      setPcFameStatus(String(error));
+    } finally {
+      if (inputRef?.current) inputRef.current.value = '';
+    }
   };
 
   const readyCount = players.filter((p) => p.ready).length;
@@ -667,27 +709,6 @@ function App() {
         </div>
       </div>
 
-      <div className="force-bars">
-        <div className="force-bar-group">
-          <span className="force-label">A</span>
-          <div className="force-bar">
-            <div
-              className="force-fill a"
-              style={{ width: `${Math.abs(forceA) * 100}%` }}
-            />
-          </div>
-        </div>
-        <div className="force-bar-group">
-          <span className="force-label">B</span>
-          <div className="force-bar">
-            <div
-              className="force-fill b"
-              style={{ width: `${Math.abs(forceB) * 100}%` }}
-            />
-          </div>
-        </div>
-      </div>
-
       {phase === 'result' && (
         <div className="result-overlay">
           <div className="result-card">
@@ -702,27 +723,27 @@ function App() {
                 <div className="pc-fame-col honor">
                   <p>명예의 전당 (승리팀)</p>
                   <input
-                    className="pc-file-input"
+                    ref={honorCaptureInputRef}
                     type="file"
                     accept="image/*"
                     capture="environment"
-                    onChange={(e) => readImageAsDataUrl(e.target.files?.[0], setPcHonorImage)}
+                    style={{ display: 'none' }}
+                    onChange={(e) => handlePcCaptureChange('honor', e.target.files?.[0], honorCaptureInputRef)}
                   />
-                  {pcHonorImage && <img className="pc-fame-preview" src={pcHonorImage} alt="honor preview" />}
-                  <button className="btn-primary btn-small" onClick={() => submitPcFameRecord('honor')}>
-                    명예 등록
+                  <button className="btn-primary btn-small" onClick={() => openPcCapture('honor')}>
+                    명예 촬영 등록
                   </button>
                 </div>
                 <div className="pc-fame-col shame">
                   <p>불명예의 전당 (패배팀)</p>
                   <input
-                    className="pc-file-input"
+                    ref={shameCaptureInputRef}
                     type="file"
                     accept="image/*"
                     capture="environment"
-                    onChange={(e) => readImageAsDataUrl(e.target.files?.[0], setPcShameImage)}
+                    style={{ display: 'none' }}
+                    onChange={(e) => handlePcCaptureChange('shame', e.target.files?.[0], shameCaptureInputRef)}
                   />
-                  {pcShameImage && <img className="pc-fame-preview" src={pcShameImage} alt="shame preview" />}
                   <label className="pc-consent-row">
                     <input
                       type="checkbox"
@@ -731,8 +752,8 @@ function App() {
                     />
                     <span>불명예 등록 동의</span>
                   </label>
-                  <button className="btn-primary btn-small" onClick={() => submitPcFameRecord('shame')}>
-                    불명예 등록
+                  <button className="btn-primary btn-small" onClick={() => openPcCapture('shame')}>
+                    불명예 촬영 등록
                   </button>
                 </div>
               </div>

@@ -258,24 +258,6 @@ body {
   color: var(--text-dim);
 }
 
-.pc-file-input {
-  width: 100%;
-  background: #ffffff;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  color: var(--text);
-  font-size: 12px;
-  padding: 8px;
-}
-
-.pc-fame-preview {
-  width: 100%;
-  max-height: 120px;
-  object-fit: cover;
-  border-radius: 8px;
-  border: 1px solid rgba(15, 23, 42, 0.12);
-}
-
 .pc-consent-row {
   display: flex;
   align-items: center;
@@ -772,51 +754,6 @@ body {
   opacity: 0.6;
 }
 
-/* Force Bars */
-.force-bars {
-  display: flex;
-  gap: 24px;
-  width: 100%;
-  max-width: 1200px;
-}
-
-.force-bar-group {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.force-label {
-  font-weight: 700;
-  font-size: 14px;
-  width: 24px;
-  text-align: center;
-  color: var(--text-dim);
-}
-
-.force-bar {
-  flex: 1;
-  height: 12px;
-  background: #e2e8f0;
-  border-radius: 6px;
-  overflow: hidden;
-}
-
-.force-fill {
-  height: 100%;
-  border-radius: 6px;
-  transition: width 0.1s linear;
-}
-
-.force-fill.a {
-  background: linear-gradient(90deg, var(--team-a), var(--team-a-light));
-}
-
-.force-fill.b {
-  background: linear-gradient(90deg, var(--team-b), var(--team-b-light));
-}
-
 /* Result Overlay */
 .result-overlay {
   position: fixed;
@@ -976,11 +913,6 @@ body {
   .url-box {
     font-size: 11px;
     padding: 10px 12px;
-  }
-
-  .force-bars {
-    flex-direction: column;
-    gap: 8px;
   }
 
   .result-card {

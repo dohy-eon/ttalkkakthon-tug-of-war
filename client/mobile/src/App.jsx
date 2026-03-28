@@ -5,7 +5,8 @@ import './App.css';
 const SERVER_URL = window.location.origin;
 const DECAY = 0.9;
 const PULL_SCALE = 0.22;
-const FRONT_BACK_DOMINANCE_MIN = 0.4;
+const HORIZONTAL_GRAVITY_Z_MIN = 6.5;
+const HORIZONTAL_GRAVITY_Z_MAX = 9.8;
 const PULL_TRIGGER_THRESHOLD = 0.36;
 const PULL_BEAT_MS = 1000;
 const PULL_BEAT_TOLERANCE_MS = 220;
@@ -62,18 +63,25 @@ function App() {
   const [permissionGranted, setPermissionGranted] = useState(false);
   const [sensorSupported, setSensorSupported] = useState(true);
   const [calibrated, setCalibrated] = useState(false);
+  const [baselineBeta, setBaselineBeta] = useState(0);
   const [baselineGamma, setBaselineGamma] = useState(0);
+  const [currentBeta, setCurrentBeta] = useState(0);
   const [currentGamma, setCurrentGamma] = useState(0);
   const [force, setForce] = useState(0);
 
   const socketRef = useRef(null);
   const sensorStartedRef = useRef(false);
   const pullForceRef = useRef(0);
+  const horizontalConfidenceRef = useRef(0);
+  const currentBetaRef = useRef(0);
   const currentGammaRef = useRef(0);
+  const baselineBetaRef = useRef(0);
   const baselineGammaRef = useRef(0);
   const emitForceIntervalRef = useRef(null);
   const soloLoopRef = useRef(null);
   const soloEndAtRef = useRef(0);
+  const soloSessionIdRef = useRef('');
+  const lastSoloLiveEmitAtRef = useRef(0);
   const lastPullBeatAtRef = useRef(0);
   const pullPulseUntilRef = useRef(0);
   const pullOverThresholdRef = useRef(false);
@@ -113,28 +121,31 @@ function App() {
   }, []);
 
   const onMotion = (event) => {
-    const accel = event.acceleration || event.accelerationIncludingGravity;
-    if (!accel || accel.x === null || accel.y === null || accel.z === null) return;
+    const linear = event.acceleration;
+    const gravity = event.accelerationIncludingGravity;
+    if (!gravity || gravity.z === null) return;
 
-    const ax = Math.abs(accel.x);
-    const ay = Math.abs(accel.y);
-    const az = Math.abs(accel.z);
-    const total = ax + ay + az + 0.0001;
-    const dominance = az / total;
-    const dominanceGain =
-      dominance >= FRONT_BACK_DOMINANCE_MIN
-        ? clamp((dominance - FRONT_BACK_DOMINANCE_MIN) / (1 - FRONT_BACK_DOMINANCE_MIN), 0, 1)
-        : 0;
+    const gravityZ = Math.abs(gravity.z);
+    const horizontalConfidence = clamp(
+      (gravityZ - HORIZONTAL_GRAVITY_Z_MIN) / (HORIZONTAL_GRAVITY_Z_MAX - HORIZONTAL_GRAVITY_Z_MIN),
+      0,
+      1
+    );
+    horizontalConfidenceRef.current = horizontalConfidence;
 
-    // Front/back 축(z축) 가속이 우세할수록 "당기기"로 인식한다.
-    const rawPull = clamp(az * PULL_SCALE * (0.35 + dominanceGain * 0.65), 0, 1);
+    // 수평 자세에서 앞뒤 당기기 축은 y축 가속으로 본다.
+    const pullAxis = Math.abs(Number(linear?.y) || 0);
+    const rawPull = clamp(pullAxis * PULL_SCALE * (0.35 + horizontalConfidence * 0.65), 0, 1);
     const smoothed = pullForceRef.current * DECAY + rawPull * (1 - DECAY);
     pullForceRef.current = clamp(smoothed, 0, 1);
   };
 
   const onOrientation = (event) => {
+    const beta = Number(event.beta) || 0;
     const gamma = Number(event.gamma) || 0;
+    currentBetaRef.current = beta;
     currentGammaRef.current = gamma;
+    setCurrentBeta(beta);
     setCurrentGamma(gamma);
   };
 
@@ -193,10 +204,13 @@ function App() {
     setNeedsPermission(false);
     setPermissionGranted(false);
     setCalibrated(false);
+    setBaselineBeta(0);
     setBaselineGamma(0);
+    baselineBetaRef.current = 0;
     baselineGammaRef.current = 0;
     setForce(0);
     pullForceRef.current = 0;
+    horizontalConfidenceRef.current = 0;
     lastPullBeatAtRef.current = 0;
     pullPulseUntilRef.current = 0;
     pullOverThresholdRef.current = false;
@@ -280,6 +294,7 @@ function App() {
     socketRef.current?.emit('set_ready', {
       sensorGranted: true,
       calibrated: true,
+      baselineBeta: baselineBetaRef.current,
       baselineGamma: baselineGammaRef.current,
     });
   };
@@ -289,9 +304,12 @@ function App() {
       setError('센서 권한을 먼저 허용해주세요.');
       return;
     }
-    const baseline = Number(currentGammaRef.current.toFixed(2));
-    baselineGammaRef.current = baseline;
-    setBaselineGamma(baseline);
+    const baselineB = Number(currentBetaRef.current.toFixed(2));
+    const baselineG = Number(currentGammaRef.current.toFixed(2));
+    baselineBetaRef.current = baselineB;
+    baselineGammaRef.current = baselineG;
+    setBaselineBeta(baselineB);
+    setBaselineGamma(baselineG);
     setCalibrated(true);
     emitReadyIfDuel();
     setError('');
@@ -304,15 +322,23 @@ function App() {
     }
   };
 
+  const getTiltError = () => {
+    const betaDiff = Math.abs(currentBetaRef.current - baselineBetaRef.current);
+    const gammaDiff = Math.abs(currentGammaRef.current - baselineGammaRef.current);
+    return Math.hypot(betaDiff, gammaDiff);
+  };
+
   const getAccuracy = () => {
-    const tiltError = Math.abs(currentGammaRef.current - baselineGammaRef.current);
-    return clamp(1 - tiltError / 35, 0, 1);
+    const tiltError = getTiltError();
+    const horizontalConfidence = horizontalConfidenceRef.current;
+    const tiltScore = clamp(1 - tiltError / 40, 0, 1);
+    return tiltScore * (0.4 + horizontalConfidence * 0.6);
   };
 
   const getOutputForce = () => {
     const now = Date.now();
     const accuracy = getAccuracy();
-    const tiltError = Math.abs(currentGammaRef.current - baselineGammaRef.current);
+    const tiltError = getTiltError();
     if (tiltError > 55) return { value: 0, accuracy: 0, acceptedPull: false, earlyPull: false, timingQuality: 0 };
 
     const pullLevel = pullForceRef.current;
@@ -363,6 +389,8 @@ function App() {
     if (soloCountdown <= 0) {
       setScreen('solo_play');
       soloEndAtRef.current = Date.now() + SOLO_DURATION_MS;
+      soloSessionIdRef.current = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      lastSoloLiveEmitAtRef.current = 0;
       soloStatsRef.current = {
         score: 0,
         combo: 0,
@@ -381,6 +409,11 @@ function App() {
       setSoloAccuracy(0);
       setSoloFeverScore(0);
       setSoloGrade('');
+      const socket = ensureSocket();
+      socket.emit('solo_live_start', {
+        sessionId: soloSessionIdRef.current,
+        nickname: nickname.trim(),
+      });
       return;
     }
 
@@ -393,9 +426,15 @@ function App() {
     const stats = soloStatsRef.current;
     const avgAccuracy = stats.accuracyCount > 0 ? (stats.accuracySum / stats.accuracyCount) * 100 : 0;
     setSoloAccuracy(Number(avgAccuracy.toFixed(1)));
+    const socket = ensureSocket();
+    socket.emit('solo_live_end', {
+      sessionId: soloSessionIdRef.current,
+      score: stats.score,
+      maxCombo: stats.maxCombo,
+      accuracy: Number(avgAccuracy.toFixed(1)),
+    });
 
     try {
-      const socket = ensureSocket();
       socket.emit(
         'submit_solo_result',
         {
@@ -435,6 +474,22 @@ function App() {
       if (left <= 0) {
         endSoloGame();
         return;
+      }
+
+      const nowMs = Date.now();
+      if (nowMs - lastSoloLiveEmitAtRef.current >= 120) {
+        lastSoloLiveEmitAtRef.current = nowMs;
+        const avgAccuracyLive = stats.accuracyCount > 0 ? (stats.accuracySum / stats.accuracyCount) * 100 : 0;
+        ensureSocket().emit('solo_live_update', {
+          sessionId: soloSessionIdRef.current,
+          score: stats.score,
+          combo: stats.combo,
+          maxCombo: stats.maxCombo,
+          accuracy: Number(avgAccuracyLive.toFixed(1)),
+          grade: soloGrade || '-',
+          fever: left <= 5000,
+          timeLeftMs: left,
+        });
       }
 
       if (earlyPull) {
@@ -553,9 +608,11 @@ function App() {
   };
 
   const getTiltStatus = () => {
-    const diff = Math.abs(currentGamma - baselineGamma);
-    if (diff <= 8) return '정상';
-    if (diff <= 18) return '약간 기울어짐';
+    const betaDiff = Math.abs(currentBeta - baselineBeta);
+    const gammaDiff = Math.abs(currentGamma - baselineGamma);
+    const diff = Math.hypot(betaDiff, gammaDiff);
+    if (diff <= 10) return '정상';
+    if (diff <= 20) return '약간 기울어짐';
     return '조정 필요';
   };
 
@@ -630,8 +687,8 @@ function App() {
         <h2 className="title small">캘리브레이션</h2>
         <p className="subtitle">기기를 수평으로 들고 기준을 설정하세요.</p>
         <div className="card">
-          <p>현재 기울기: {currentGamma.toFixed(1)}deg</p>
-          <p>기준값: {baselineGamma.toFixed(1)}deg</p>
+          <p>현재 기울기 (beta/gamma): {currentBeta.toFixed(1)} / {currentGamma.toFixed(1)}deg</p>
+          <p>기준값 (beta/gamma): {baselineBeta.toFixed(1)} / {baselineGamma.toFixed(1)}deg</p>
           <p>상태: {getTiltStatus()}</p>
         </div>
         <div className="form">
@@ -684,7 +741,7 @@ function App() {
           <div className="force-indicator" style={{ left: `${50 + force * 45}%` }} />
         </div>
         <p className="subtitle">
-          폰을 가슴 쪽으로 짧게 당겼다가 원위치 (팀 방향은 자동 반영)
+          수평 유지 후 앞뒤로 짧게 당겼다가 원위치 (팀 방향은 자동 반영)
         </p>
         <p className="subtitle">리듬: 약 1초 간격으로 당기면 가장 유리합니다.</p>
       </div>

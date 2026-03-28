@@ -169,6 +169,62 @@ body {
   font-size: 14px;
 }
 
+.solo-live-panel {
+  width: 100%;
+  max-width: 720px;
+  background: var(--surface);
+  border-radius: 14px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+.solo-live-panel.fever {
+  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.45), 0 0 28px rgba(245, 158, 11, 0.2);
+}
+
+.solo-live-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--text-dim);
+  letter-spacing: 1px;
+}
+
+.live-on {
+  color: #10b981;
+  font-weight: 800;
+}
+
+.live-off {
+  color: #64748b;
+  font-weight: 700;
+}
+
+.solo-live-main {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 16px;
+  align-items: center;
+}
+
+.solo-live-score {
+  font-size: 56px;
+  line-height: 1;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+.solo-live-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
 /* Game Layout */
 .game {
   justify-content: flex-start;

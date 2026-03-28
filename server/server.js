@@ -15,6 +15,19 @@ const io = new Server(server, {
 });
 
 const rooms = {};
+const soloLiveState = {
+  active: false,
+  sessionId: null,
+  nickname: '',
+  score: 0,
+  combo: 0,
+  maxCombo: 0,
+  accuracy: 0,
+  grade: '-',
+  fever: false,
+  timeLeftMs: 0,
+  updatedAt: 0,
+};
 
 const FORBIDDEN_WORDS = ['씨발', '병신', '개새', 'fuck', 'shit', 'bitch'];
 const MAX_SOLO_RECORDS = 300;
@@ -278,6 +291,10 @@ function clampInt(value, min, max) {
   const n = Math.floor(Number(value));
   if (Number.isNaN(n)) return min;
   return Math.max(min, Math.min(max, n));
+}
+
+function emitSoloLiveState() {
+  io.emit('solo_live_state', { ...soloLiveState });
 }
 
 function serializePlayers(room) {
@@ -613,7 +630,72 @@ io.on('connection', (socket) => {
     saveSoloRecord(record);
     const rank = getSoloRank(record, { scope: 'all' });
     const dailyRank = getSoloRank(record, { scope: 'daily' });
+
+    if (soloLiveState.sessionId && soloLiveState.nickname === validation.name) {
+      soloLiveState.active = false;
+      soloLiveState.score = score;
+      soloLiveState.combo = 0;
+      soloLiveState.maxCombo = Math.max(soloLiveState.maxCombo, maxCombo);
+      soloLiveState.accuracy = Number(accuracy.toFixed(1));
+      soloLiveState.grade = 'END';
+      soloLiveState.timeLeftMs = 0;
+      soloLiveState.updatedAt = Date.now();
+      emitSoloLiveState();
+    }
+
     callback({ ok: true, rank, dailyRank });
+  });
+
+  socket.on('solo_live_start', (payload) => {
+    const validation = validateNickname(payload?.nickname);
+    if (!validation.ok) return;
+
+    soloLiveState.active = true;
+    soloLiveState.sessionId = String(payload?.sessionId || `${Date.now()}`);
+    soloLiveState.nickname = validation.name;
+    soloLiveState.score = 0;
+    soloLiveState.combo = 0;
+    soloLiveState.maxCombo = 0;
+    soloLiveState.accuracy = 0;
+    soloLiveState.grade = 'START';
+    soloLiveState.fever = false;
+    soloLiveState.timeLeftMs = DUEL_DURATION_MS;
+    soloLiveState.updatedAt = Date.now();
+    emitSoloLiveState();
+  });
+
+  socket.on('solo_live_update', (payload) => {
+    if (!soloLiveState.sessionId) return;
+    const sessionId = String(payload?.sessionId || '');
+    if (!sessionId || sessionId !== soloLiveState.sessionId) return;
+
+    soloLiveState.active = true;
+    soloLiveState.score = Math.max(0, Math.floor(Number(payload?.score) || 0));
+    soloLiveState.combo = Math.max(0, Math.floor(Number(payload?.combo) || 0));
+    soloLiveState.maxCombo = Math.max(0, Math.floor(Number(payload?.maxCombo) || 0));
+    soloLiveState.accuracy = Math.max(0, Math.min(100, Number(payload?.accuracy) || 0));
+    soloLiveState.grade = String(payload?.grade || '-').slice(0, 16);
+    soloLiveState.fever = !!payload?.fever;
+    soloLiveState.timeLeftMs = Math.max(0, Math.floor(Number(payload?.timeLeftMs) || 0));
+    soloLiveState.updatedAt = Date.now();
+    emitSoloLiveState();
+  });
+
+  socket.on('solo_live_end', (payload) => {
+    if (!soloLiveState.sessionId) return;
+    const sessionId = String(payload?.sessionId || '');
+    if (!sessionId || sessionId !== soloLiveState.sessionId) return;
+
+    soloLiveState.active = false;
+    soloLiveState.score = Math.max(0, Math.floor(Number(payload?.score) || soloLiveState.score));
+    soloLiveState.combo = 0;
+    soloLiveState.maxCombo = Math.max(0, Math.floor(Number(payload?.maxCombo) || soloLiveState.maxCombo));
+    soloLiveState.accuracy = Math.max(0, Math.min(100, Number(payload?.accuracy) || soloLiveState.accuracy));
+    soloLiveState.grade = 'END';
+    soloLiveState.fever = false;
+    soloLiveState.timeLeftMs = 0;
+    soloLiveState.updatedAt = Date.now();
+    emitSoloLiveState();
   });
 
   socket.on('disconnect', () => {

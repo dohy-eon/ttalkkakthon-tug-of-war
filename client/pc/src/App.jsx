@@ -35,6 +35,18 @@ function App() {
   const [rankingNameQuery, setRankingNameQuery] = useState('');
   const [rankingScoreMin, setRankingScoreMin] = useState('');
   const [rankingScoreMax, setRankingScoreMax] = useState('');
+  const [soloLive, setSoloLive] = useState({
+    active: false,
+    nickname: '-',
+    score: 0,
+    combo: 0,
+    maxCombo: 0,
+    accuracy: 0,
+    grade: '-',
+    fever: false,
+    timeLeftMs: 0,
+    updatedAt: 0,
+  });
   const socketRef = useRef(null);
   const listenersBoundRef = useRef(false);
 
@@ -128,6 +140,21 @@ function App() {
       setPhase('closed');
     });
 
+    socket.on('solo_live_state', (state) => {
+      setSoloLive({
+        active: !!state?.active,
+        nickname: state?.nickname || '-',
+        score: state?.score ?? 0,
+        combo: state?.combo ?? 0,
+        maxCombo: state?.maxCombo ?? 0,
+        accuracy: state?.accuracy ?? 0,
+        grade: state?.grade || '-',
+        fever: !!state?.fever,
+        timeLeftMs: state?.timeLeftMs ?? 0,
+        updatedAt: state?.updatedAt ?? 0,
+      });
+    });
+
     listenersBoundRef.current = true;
   };
 
@@ -141,6 +168,7 @@ function App() {
 
   const createRoom = () => {
     if (selectedMode === 'solo') {
+      ensureSocket();
       setPhase('solo_guide');
       return;
     }
@@ -249,6 +277,27 @@ function App() {
               뒤로
             </button>
           </div>
+        </div>
+        <div className={`solo-live-panel ${soloLive.fever ? 'fever' : ''}`}>
+          <div className="solo-live-head">
+            <span>1인 모드 실시간 점수</span>
+            <span className={soloLive.active ? 'live-on' : 'live-off'}>
+              {soloLive.active ? 'LIVE' : 'IDLE'}
+            </span>
+          </div>
+          <div className="solo-live-main">
+            <div className="solo-live-score">{soloLive.score}</div>
+            <div className="solo-live-meta">
+              <p>플레이어: {soloLive.nickname}</p>
+              <p>콤보: {soloLive.combo} (최고 {soloLive.maxCombo})</p>
+              <p>정확도: {Number(soloLive.accuracy || 0).toFixed(1)}%</p>
+              <p>판정: {soloLive.grade}</p>
+              <p>남은 시간: {Math.ceil((soloLive.timeLeftMs || 0) / 1000)}s</p>
+            </div>
+          </div>
+          <p className="hint">
+            마지막 업데이트: {soloLive.updatedAt ? new Date(soloLive.updatedAt).toLocaleTimeString() : '-'}
+          </p>
         </div>
       </div>
     );

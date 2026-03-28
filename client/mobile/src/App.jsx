@@ -84,7 +84,6 @@ function App() {
   const [baselineGamma, setBaselineGamma] = useState(0);
   const [currentBeta, setCurrentBeta] = useState(0);
   const [currentGamma, setCurrentGamma] = useState(0);
-  const [force, setForce] = useState(0);
 
   const socketRef = useRef(null);
   const sensorStartedRef = useRef(false);
@@ -240,7 +239,6 @@ function App() {
     setBaselineGamma(0);
     baselineBetaRef.current = 0;
     baselineGammaRef.current = 0;
-    setForce(0);
     pullForceRef.current = 0;
     lastPullAxisRef.current = 0;
     horizontalConfidenceRef.current = 0;
@@ -258,6 +256,8 @@ function App() {
 
   const triggerPullHaptic = ({ timingQuality = 0, fever = false, strong = false } = {}) => {
     if (typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function') return;
+    // Trigger haptics only on GREAT+ rhythm hits.
+    if (!strong && timingQuality < 0.58) return;
     const now = Date.now();
     if (now - lastHapticAtRef.current < HAPTIC_COOLDOWN_MS) return;
     lastHapticAtRef.current = now;
@@ -266,11 +266,10 @@ function App() {
       navigator.vibrate(fever ? [22, 16, 28] : [16, 12, 22]);
       return;
     }
-    if (timingQuality > 0.55) {
+    if (timingQuality >= 0.58) {
       navigator.vibrate(fever ? [18, 10, 18] : [12, 8, 12]);
       return;
     }
-    navigator.vibrate(fever ? 14 : 10);
   };
 
   const showRhythmJudge = (timingQuality, earlyPull = false) => {
@@ -455,7 +454,6 @@ function App() {
     emitForceIntervalRef.current = setInterval(() => {
       const output = getOutputForce();
       const directional = team === 'A' ? -output.value : output.value;
-      setForce(directional);
       const judgeInfo = output.acceptedPull
         ? getRhythmJudgeInfo(output.timingQuality, false)
         : output.earlyPull
@@ -564,7 +562,6 @@ function App() {
       setSoloTimeLeftMs(left);
 
       const { value, accuracy, acceptedPull, earlyPull, timingQuality } = getOutputForce();
-      setForce(value);
       const stats = soloStatsRef.current;
       stats.accuracySum += accuracy;
       stats.accuracyCount += 1;
@@ -901,10 +898,6 @@ function App() {
           <span>남은 시간: {Math.ceil(duelTimeLeftMs / 1000)}s</span>
           <span className={duelFever ? 'fever' : ''}>{duelFever ? 'FEVER!' : 'NORMAL'}</span>
         </div>
-        <div className="force-gauge">
-          <div className="force-center" />
-          <div className="force-indicator" style={{ left: `${50 + force * 45}%` }} />
-        </div>
         <p className="subtitle">
           수평 유지 후 앞뒤로 짧게 당겼다가 원위치 (팀 방향은 자동 반영)
         </p>
@@ -986,10 +979,6 @@ function App() {
           <p>콤보: {soloCombo}</p>
           <p>판정: {soloGrade || '-'}</p>
           <p>팁: 0.5초 리듬으로 당기기</p>
-        </div>
-        <div className="force-gauge">
-          <div className="force-center" />
-          <div className="force-indicator" style={{ left: `${50 + force * 45}%` }} />
         </div>
       </div>
     );

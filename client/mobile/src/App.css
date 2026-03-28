@@ -84,6 +84,11 @@ body,
   outline: none;
 }
 
+.file-input {
+  padding: 10px;
+  font-size: 13px;
+}
+
 .btn-primary,
 .btn-secondary {
   width: 100%;
@@ -147,6 +152,22 @@ body,
 .card.list {
   max-height: 320px;
   overflow: auto;
+}
+
+.fame-preview {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid #334155;
+  object-fit: cover;
+  max-height: 220px;
+}
+
+.consent-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-dim);
 }
 
 .list-item {

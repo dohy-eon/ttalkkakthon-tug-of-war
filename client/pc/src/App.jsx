@@ -35,6 +35,8 @@ function App() {
   const [rankingNameQuery, setRankingNameQuery] = useState('');
   const [rankingScoreMin, setRankingScoreMin] = useState('');
   const [rankingScoreMax, setRankingScoreMax] = useState('');
+  const [hallHonor, setHallHonor] = useState([]);
+  const [hallShame, setHallShame] = useState([]);
   const [soloLive, setSoloLive] = useState({
     active: false,
     nickname: '-',
@@ -206,6 +208,17 @@ function App() {
     );
   };
 
+  const fetchHallRecords = () => {
+    const socket = ensureSocket();
+    socket.emit('get_fame_records', { type: 'honor', limit: 24 }, (res) => {
+      setHallHonor(res?.records || []);
+      setPhase('hall');
+    });
+    socket.emit('get_fame_records', { type: 'shame', limit: 24 }, (res) => {
+      setHallShame(res?.records || []);
+    });
+  };
+
   const readyCount = players.filter((p) => p.ready).length;
   const canStart =
     phase === 'waiting' &&
@@ -247,6 +260,9 @@ function App() {
           </button>
           <button className="btn-secondary" onClick={() => fetchRanking()}>
             랭킹 보기
+          </button>
+          <button className="btn-secondary" onClick={fetchHallRecords}>
+            전당 보기
           </button>
         </div>
       </div>
@@ -381,6 +397,53 @@ function App() {
             ))}
           </div>
         </div>
+      </div>
+    );
+  }
+
+  if (phase === 'hall') {
+    return (
+      <div className="container lobby">
+        <div className="logo-area">
+          <h1 className="title-small">명예/불명예 전당</h1>
+          <p className="subtitle">최근 등록된 경기 사진 기록</p>
+        </div>
+        <div className="hall-layout">
+          <section className="hall-panel honor">
+            <h3>명예의 전당</h3>
+            <div className="hall-grid">
+              {hallHonor.length === 0 && <p className="hint">기록이 없습니다</p>}
+              {hallHonor.map((item) => (
+                <article key={item.id} className="hall-card">
+                  <img src={item.imageDataUrl} alt={`${item.displayName} honor`} />
+                  <div className="hall-meta">
+                    <strong>{item.displayName}</strong>
+                    <span>{item.mode === 'team' ? '팀전' : '2인'}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section className="hall-panel shame">
+            <h3>불명예의 전당</h3>
+            <div className="hall-grid">
+              {hallShame.length === 0 && <p className="hint">기록이 없습니다</p>}
+              {hallShame.map((item) => (
+                <article key={item.id} className="hall-card">
+                  <img src={item.imageDataUrl} alt={`${item.displayName} shame`} />
+                  <div className="hall-meta">
+                    <strong>{item.displayName}</strong>
+                    <span>{item.mode === 'team' ? '팀전' : '2인'}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        </div>
+        <button className="btn-secondary" onClick={() => setPhase('lobby')}>
+          메인으로
+        </button>
       </div>
     );
   }

@@ -43,6 +43,10 @@ function App() {
   const [duelFever, setDuelFever] = useState(false);
   const [duelWinner, setDuelWinner] = useState('');
   const [duelReason, setDuelReason] = useState('');
+  const [duelMode, setDuelMode] = useState('duel');
+  const [fameImageDataUrl, setFameImageDataUrl] = useState('');
+  const [fameConsent, setFameConsent] = useState(false);
+  const [fameStatus, setFameStatus] = useState('');
 
   const [ranking, setRanking] = useState([]);
   const [rankResult, setRankResult] = useState(null);
@@ -197,6 +201,9 @@ function App() {
     socket.on('game_reset', () => {
       setDuelWinner('');
       setDuelReason('');
+      setFameImageDataUrl('');
+      setFameConsent(false);
+      setFameStatus('');
       setScreen('duel_wait');
     });
 
@@ -206,6 +213,9 @@ function App() {
       setMode('duel');
       setTeam('');
       setPlayers([]);
+      setFameImageDataUrl('');
+      setFameConsent(false);
+      setFameStatus('');
     });
 
     return socket;
@@ -643,6 +653,7 @@ function App() {
       }
       setError('');
       setTeam(res.team);
+      setDuelMode(res.mode || 'duel');
       beginSensorFlow('duel');
     });
   };
@@ -679,6 +690,54 @@ function App() {
     );
   };
 
+  const onFameImageChange = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setFameStatus('이미지 파일만 업로드할 수 있습니다.');
+      return;
+    }
+    if (file.size > 1_000_000) {
+      setFameStatus('이미지 용량은 1MB 이하를 권장합니다.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      setFameImageDataUrl(String(reader.result || ''));
+      setFameStatus('');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const submitFameRecord = (type) => {
+    if (!fameImageDataUrl) {
+      setFameStatus('이미지를 먼저 선택해주세요.');
+      return;
+    }
+    if (type === 'shame' && !fameConsent) {
+      setFameStatus('불명예의 전당 등록은 동의가 필요합니다.');
+      return;
+    }
+
+    ensureSocket().emit(
+      'submit_fame_record',
+      {
+        type,
+        mode: duelMode,
+        displayName: nickname.trim(),
+        imageDataUrl: fameImageDataUrl,
+      },
+      (res) => {
+        if (res?.error) {
+          setFameStatus(res.error);
+          return;
+        }
+        setFameStatus(type === 'honor' ? '명예의 전당 등록 완료!' : '불명예의 전당 등록 완료!');
+      }
+    );
+  };
+
   const leaveDuelSession = () => {
     if (socketRef.current) {
       socketRef.current.disconnect();
@@ -689,6 +748,10 @@ function App() {
     setPlayers([]);
     setDuelWinner('');
     setDuelReason('');
+    setDuelMode('duel');
+    setFameImageDataUrl('');
+    setFameConsent(false);
+    setFameStatus('');
     setScreen('duel_join');
   };
 
@@ -841,6 +904,8 @@ function App() {
 
   if (screen === 'duel_result') {
     const isWin = duelWinner === team;
+    const isDraw = duelWinner === 'DRAW';
+    const fameType = isWin ? 'honor' : 'shame';
     return (
       <div className="container">
         <h2 className={`result ${isWin ? 'win' : 'lose'}`}>
@@ -855,6 +920,23 @@ function App() {
             </div>
           ))}
         </div>
+        {!isDraw && (
+          <div className="card">
+            <p>{isWin ? '명예의 전당 등록' : '불명예의 전당 등록'}</p>
+            <input className="input file-input" type="file" accept="image/*" onChange={onFameImageChange} />
+            {fameImageDataUrl && <img className="fame-preview" src={fameImageDataUrl} alt="fame preview" />}
+            {!isWin && (
+              <label className="consent-row">
+                <input type="checkbox" checked={fameConsent} onChange={(e) => setFameConsent(e.target.checked)} />
+                <span>불명예의 전당 등록에 동의합니다.</span>
+              </label>
+            )}
+            <button className="btn-primary" onClick={() => submitFameRecord(fameType)}>
+              {isWin ? '명예의 전당 등록' : '불명예의 전당 등록'}
+            </button>
+            {fameStatus && <p className="subtitle">{fameStatus}</p>}
+          </div>
+        )}
         <div className="form">
           <button className="btn-primary" onClick={leaveDuelSession}>
             메인으로

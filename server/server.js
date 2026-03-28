@@ -80,7 +80,7 @@ app.get('/', (_req, res) => {
 
 const TICK_RATE = 20; // 50ms per tick
 const K = 0.3;
-const LATEST_SCHEMA_VERSION = 3;
+const LATEST_SCHEMA_VERSION = 4;
 
 const dataDir = path.join(__dirname, 'data');
 fs.mkdirSync(dataDir, { recursive: true });
@@ -152,6 +152,26 @@ function runMigrations() {
         `);
       },
     },
+    {
+      version: 4,
+      up: () => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS fame_records (
+            id TEXT PRIMARY KEY,
+            type TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            image_data_url TEXT NOT NULL,
+            note TEXT,
+            created_at INTEGER NOT NULL
+          );
+        `);
+        db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_fame_records_type_created
+          ON fame_records(type, created_at DESC);
+        `);
+      },
+    },
   ];
 
   for (const migration of migrations) {
@@ -207,6 +227,27 @@ const pruneSoloStmt = db.prepare(`
   )
 `);
 
+const insertFameStmt = db.prepare(`
+  INSERT INTO fame_records (
+    id,
+    type,
+    mode,
+    display_name,
+    image_data_url,
+    note,
+    created_at
+  )
+  VALUES (
+    @id,
+    @type,
+    @mode,
+    @displayName,
+    @imageDataUrl,
+    @note,
+    @createdAt
+  )
+`);
+
 function getDayStartTimestamp() {
   const now = new Date();
   return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -214,6 +255,10 @@ function getDayStartTimestamp() {
 
 function normalizeRankingScope(scope) {
   return scope === 'daily' ? 'daily' : 'all';
+}
+
+function normalizeFameType(type) {
+  return type === 'shame' ? 'shame' : 'honor';
 }
 
 function buildRankingWhereClause({ scope, nicknameQuery, scoreMin, scoreMax }) {
@@ -285,6 +330,26 @@ function getSoloRank(record, { scope = 'all' } = {}) {
       (score > @score OR (score = @score AND created_at < @createdAt))
   `);
   return stmt.get({ ...params, score: record.score, createdAt: record.createdAt }).rank;
+}
+
+function getFameRecords({ type = 'honor', limit = 30 } = {}) {
+  const safeLimit = clampInt(limit, 1, 60);
+  const normalizedType = normalizeFameType(type);
+  const stmt = db.prepare(`
+    SELECT
+      id,
+      type,
+      mode,
+      display_name AS displayName,
+      image_data_url AS imageDataUrl,
+      note,
+      created_at AS createdAt
+    FROM fame_records
+    WHERE type = @type
+    ORDER BY created_at DESC
+    LIMIT @limit
+  `);
+  return stmt.all({ type: normalizedType, limit: safeLimit });
 }
 
 function clampInt(value, min, max) {
@@ -605,6 +670,23 @@ io.on('connection', (socket) => {
     cb({ top, scope });
   });
 
+  socket.on('get_fame_records', (payload, callback) => {
+    let params = payload;
+    let cb = callback;
+    if (typeof payload === 'function') {
+      cb = payload;
+      params = {};
+    }
+    if (typeof cb !== 'function') return;
+
+    const type = normalizeFameType(params?.type);
+    const records = getFameRecords({
+      type,
+      limit: params?.limit ?? 30,
+    });
+    cb({ type, records });
+  });
+
   socket.on('submit_solo_result', (payload, callback) => {
     const validation = validateNickname(payload?.nickname);
     if (!validation.ok) {
@@ -644,6 +726,39 @@ io.on('connection', (socket) => {
     }
 
     callback({ ok: true, rank, dailyRank });
+  });
+
+  socket.on('submit_fame_record', (payload, callback) => {
+    const cb = typeof callback === 'function' ? callback : () => {};
+    const validation = validateNickname(payload?.displayName);
+    if (!validation.ok) {
+      cb({ error: validation.message });
+      return;
+    }
+
+    const type = normalizeFameType(payload?.type);
+    const mode = payload?.mode === ROOM_MODE_TEAM ? ROOM_MODE_TEAM : ROOM_MODE_DUEL;
+    const imageDataUrl = String(payload?.imageDataUrl || '');
+    if (!imageDataUrl.startsWith('data:image/')) {
+      cb({ error: '이미지 파일을 선택해주세요.' });
+      return;
+    }
+    if (imageDataUrl.length > 1_600_000) {
+      cb({ error: '이미지 용량이 너무 큽니다. 더 작은 이미지를 사용해주세요.' });
+      return;
+    }
+
+    const record = {
+      id: `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+      type,
+      mode,
+      displayName: validation.name,
+      imageDataUrl,
+      note: String(payload?.note || '').slice(0, 80),
+      createdAt: Date.now(),
+    };
+    insertFameStmt.run(record);
+    cb({ ok: true, recordId: record.id });
   });
 
   socket.on('solo_live_start', (payload) => {

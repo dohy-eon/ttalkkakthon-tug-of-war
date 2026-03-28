@@ -22,6 +22,7 @@ const DUEL_DURATION_MS = 30000;
 const FEVER_THRESHOLD_MS = 5000;
 const ROOM_MODE_DUEL = 'duel';
 const ROOM_MODE_TEAM = 'team';
+const COMBO_THRESHOLD = 0.2;
 
 function normalizeName(raw) {
   return String(raw || '').trim();
@@ -354,6 +355,14 @@ io.on('connection', (socket) => {
       hostSocketId: socket.id,
       players: {},
       position: 0,
+      scoreA: 0,
+      scoreB: 0,
+      comboA: 0,
+      comboB: 0,
+      maxComboA: 0,
+      maxComboB: 0,
+      gainA: 0,
+      gainB: 0,
       teamACount: 0,
       teamBCount: 0,
       started: false,
@@ -500,6 +509,14 @@ io.on('connection', (socket) => {
       currentRoom.countdown = null;
       currentRoom.started = true;
       currentRoom.position = 0;
+      currentRoom.scoreA = 0;
+      currentRoom.scoreB = 0;
+      currentRoom.comboA = 0;
+      currentRoom.comboB = 0;
+      currentRoom.maxComboA = 0;
+      currentRoom.maxComboB = 0;
+      currentRoom.gainA = 0;
+      currentRoom.gainB = 0;
       currentRoom.winner = null;
       currentRoom.startedAt = Date.now();
       currentRoom.gameEndsAt = currentRoom.startedAt + DUEL_DURATION_MS;
@@ -522,6 +539,14 @@ io.on('connection', (socket) => {
     if (!room || !socket.isHost) return;
 
     room.position = 0;
+    room.scoreA = 0;
+    room.scoreB = 0;
+    room.comboA = 0;
+    room.comboB = 0;
+    room.maxComboA = 0;
+    room.maxComboB = 0;
+    room.gainA = 0;
+    room.gainB = 0;
     room.winner = null;
     room.started = false;
     room.startedAt = null;
@@ -632,25 +657,54 @@ setInterval(() => {
 
     let forceA = 0;
     let forceB = 0;
+    let effectiveA = 0;
+    let effectiveB = 0;
     let countA = 0;
     let countB = 0;
 
     for (const player of Object.values(room.players)) {
+      const weightedForce = player.force * (0.6 + player.accuracy * 0.4);
       if (player.team === 'A') {
-        forceA += player.force * (0.6 + player.accuracy * 0.4);
+        forceA += weightedForce;
+        effectiveA += Math.max(0, -weightedForce);
         countA++;
       } else {
-        forceB += player.force * (0.6 + player.accuracy * 0.4);
+        forceB += weightedForce;
+        effectiveB += Math.max(0, weightedForce);
         countB++;
       }
     }
 
-    const avgA = countA > 0 ? forceA / countA : 0;
-    const avgB = countB > 0 ? forceB / countB : 0;
+    const avgA = countA > 0 ? forceA / countA : 0; // raw signed
+    const avgB = countB > 0 ? forceB / countB : 0; // raw signed
+    const pullA = countA > 0 ? effectiveA / countA : 0; // team-relative positive pull
+    const pullB = countB > 0 ? effectiveB / countB : 0; // team-relative positive pull
     const timeLeftMs = Math.max(0, room.gameEndsAt - Date.now());
     const fever = timeLeftMs <= FEVER_THRESHOLD_MS;
-    const delta = (avgA - avgB) * (fever ? K * 1.25 : K);
+    const delta = (pullA - pullB) * (fever ? K * 1.25 : K);
     room.position = Math.max(-100, Math.min(100, room.position + delta));
+
+    if (pullA >= COMBO_THRESHOLD) {
+      room.comboA += 1;
+      room.maxComboA = Math.max(room.maxComboA, room.comboA);
+    } else {
+      room.comboA = 0;
+    }
+    if (pullB >= COMBO_THRESHOLD) {
+      room.comboB += 1;
+      room.maxComboB = Math.max(room.maxComboB, room.comboB);
+    } else {
+      room.comboB = 0;
+    }
+
+    const comboBonusA = room.comboA > 1 ? Math.min(room.comboA, 20) * 0.12 : 0;
+    const comboBonusB = room.comboB > 1 ? Math.min(room.comboB, 20) * 0.12 : 0;
+    const gainA = pullA > 0.08 ? Math.round((pullA * 4 + comboBonusA) * (fever ? 1.3 : 1)) : 0;
+    const gainB = pullB > 0.08 ? Math.round((pullB * 4 + comboBonusB) * (fever ? 1.3 : 1)) : 0;
+    room.gainA = gainA;
+    room.gainB = gainB;
+    room.scoreA += gainA;
+    room.scoreB += gainB;
 
     let winner = null;
     if (room.position >= 100) winner = 'A';
@@ -669,10 +723,20 @@ setInterval(() => {
 
     io.to(roomId).emit('game_state', {
       position: room.position,
-      forceA: avgA,
-      forceB: avgB,
+      forceA: pullA,
+      forceB: pullB,
+      rawForceA: avgA,
+      rawForceB: avgB,
       teamACount: room.teamACount,
       teamBCount: room.teamBCount,
+      scoreA: room.scoreA,
+      scoreB: room.scoreB,
+      comboA: room.comboA,
+      comboB: room.comboB,
+      maxComboA: room.maxComboA,
+      maxComboB: room.maxComboB,
+      gainA: room.gainA,
+      gainB: room.gainB,
       timeLeftMs,
       fever,
     });

@@ -19,6 +19,14 @@ function App() {
   const [countdown, setCountdown] = useState(null);
   const [timeLeftMs, setTimeLeftMs] = useState(30000);
   const [fever, setFever] = useState(false);
+  const [scoreA, setScoreA] = useState(0);
+  const [scoreB, setScoreB] = useState(0);
+  const [comboA, setComboA] = useState(0);
+  const [comboB, setComboB] = useState(0);
+  const [maxComboA, setMaxComboA] = useState(0);
+  const [maxComboB, setMaxComboB] = useState(0);
+  const [gainA, setGainA] = useState(0);
+  const [gainB, setGainB] = useState(0);
   const [winner, setWinner] = useState(null);
   const [endReason, setEndReason] = useState('');
   const [roomClosed, setRoomClosed] = useState('');
@@ -60,6 +68,14 @@ function App() {
       setCountdown(null);
       setTimeLeftMs(30000);
       setFever(false);
+      setScoreA(0);
+      setScoreB(0);
+      setComboA(0);
+      setComboB(0);
+      setMaxComboA(0);
+      setMaxComboB(0);
+      setGainA(0);
+      setGainB(0);
     });
 
     socket.on('game_state', (state) => {
@@ -70,6 +86,14 @@ function App() {
       setTeamBCount(state.teamBCount);
       setTimeLeftMs(state.timeLeftMs ?? 0);
       setFever(!!state.fever);
+      setScoreA(state.scoreA ?? 0);
+      setScoreB(state.scoreB ?? 0);
+      setComboA(state.comboA ?? 0);
+      setComboB(state.comboB ?? 0);
+      setMaxComboA(state.maxComboA ?? 0);
+      setMaxComboB(state.maxComboB ?? 0);
+      setGainA(state.gainA ?? 0);
+      setGainB(state.gainB ?? 0);
     });
 
     socket.on('game_over', (data) => {
@@ -88,6 +112,14 @@ function App() {
       setCountdown(null);
       setTimeLeftMs(30000);
       setFever(false);
+      setScoreA(0);
+      setScoreB(0);
+      setComboA(0);
+      setComboB(0);
+      setMaxComboA(0);
+      setMaxComboB(0);
+      setGainA(0);
+      setGainB(0);
       setPhase('waiting');
     });
 
@@ -340,6 +372,34 @@ function App() {
         </div>
       )}
 
+      {(phase === 'countdown' || phase === 'playing' || phase === 'result') && (
+        <div className={`scoreboard ${fever ? 'fever' : ''}`}>
+          <div className="score-team a">
+            <div className="score-top">
+              <span>TEAM A</span>
+              {gainA > 0 && <span className="gain">+{gainA}</span>}
+            </div>
+            <div className="score-value">{scoreA}</div>
+            <div className="combo-row">
+              <span>콤보 {comboA}</span>
+              <span>최고 {maxComboA}</span>
+            </div>
+          </div>
+          <div className="score-vs">VS</div>
+          <div className="score-team b">
+            <div className="score-top">
+              <span>TEAM B</span>
+              {gainB > 0 && <span className="gain">+{gainB}</span>}
+            </div>
+            <div className="score-value">{scoreB}</div>
+            <div className="combo-row">
+              <span>콤보 {comboB}</span>
+              <span>최고 {maxComboB}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {phase === 'waiting' && (
         <div className="join-guide">
           <p>모바일로 아래 주소에 접속하세요</p>
@@ -432,6 +492,8 @@ function App() {
               {winner === 'DRAW' ? '무승부!' : `TEAM ${winner} 승리!`}
             </h2>
             <p className="hint">종료 사유: {endReason || 'normal'}</p>
+            <p className="hint">최종 점수 A:{scoreA} / B:{scoreB}</p>
+            <p className="hint">최고 콤보 A:{maxComboA} / B:{maxComboB}</p>
             <div className="ready-list">
               {players.map((p) => (
                 <div key={p.socketId} className="ready-item ok">

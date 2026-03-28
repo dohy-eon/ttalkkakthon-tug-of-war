@@ -3,8 +3,13 @@ import { io } from 'socket.io-client';
 import './App.css';
 
 const SERVER_URL = window.location.origin;
-const DECAY = 0.92;
-const ACCEL_SCALE = 0.12;
+const DECAY = 0.9;
+const PULL_SCALE = 0.22;
+const FRONT_BACK_DOMINANCE_MIN = 0.4;
+const PULL_TRIGGER_THRESHOLD = 0.36;
+const PULL_BEAT_MS = 1000;
+const PULL_BEAT_TOLERANCE_MS = 220;
+const PULL_PULSE_MS = 240;
 const BAD_WORDS = ['씨발', '병신', '개새', 'fuck', 'shit', 'bitch'];
 const SOLO_DURATION_MS = 30000;
 
@@ -63,13 +68,15 @@ function App() {
 
   const socketRef = useRef(null);
   const sensorStartedRef = useRef(false);
-  const rawForceRef = useRef(0);
+  const pullForceRef = useRef(0);
   const currentGammaRef = useRef(0);
   const baselineGammaRef = useRef(0);
   const emitForceIntervalRef = useRef(null);
   const soloLoopRef = useRef(null);
-  const soloLastInputAtRef = useRef(0);
   const soloEndAtRef = useRef(0);
+  const lastPullBeatAtRef = useRef(0);
+  const pullPulseUntilRef = useRef(0);
+  const pullOverThresholdRef = useRef(false);
   const soloStatsRef = useRef({
     score: 0,
     combo: 0,
@@ -106,11 +113,23 @@ function App() {
   }, []);
 
   const onMotion = (event) => {
-    const accel = event.accelerationIncludingGravity;
-    if (!accel || accel.x === null) return;
-    const raw = accel.x * ACCEL_SCALE;
-    const smoothed = rawForceRef.current * DECAY + raw * (1 - DECAY);
-    rawForceRef.current = clamp(smoothed, -1, 1);
+    const accel = event.acceleration || event.accelerationIncludingGravity;
+    if (!accel || accel.x === null || accel.y === null || accel.z === null) return;
+
+    const ax = Math.abs(accel.x);
+    const ay = Math.abs(accel.y);
+    const az = Math.abs(accel.z);
+    const total = ax + ay + az + 0.0001;
+    const dominance = az / total;
+    const dominanceGain =
+      dominance >= FRONT_BACK_DOMINANCE_MIN
+        ? clamp((dominance - FRONT_BACK_DOMINANCE_MIN) / (1 - FRONT_BACK_DOMINANCE_MIN), 0, 1)
+        : 0;
+
+    // Front/back 축(z축) 가속이 우세할수록 "당기기"로 인식한다.
+    const rawPull = clamp(az * PULL_SCALE * (0.35 + dominanceGain * 0.65), 0, 1);
+    const smoothed = pullForceRef.current * DECAY + rawPull * (1 - DECAY);
+    pullForceRef.current = clamp(smoothed, 0, 1);
   };
 
   const onOrientation = (event) => {
@@ -177,7 +196,10 @@ function App() {
     setBaselineGamma(0);
     baselineGammaRef.current = 0;
     setForce(0);
-    rawForceRef.current = 0;
+    pullForceRef.current = 0;
+    lastPullBeatAtRef.current = 0;
+    pullPulseUntilRef.current = 0;
+    pullOverThresholdRef.current = false;
   };
 
   const checkSensorSupport = () => {
@@ -288,11 +310,37 @@ function App() {
   };
 
   const getOutputForce = () => {
+    const now = Date.now();
     const accuracy = getAccuracy();
     const tiltError = Math.abs(currentGammaRef.current - baselineGammaRef.current);
-    if (tiltError > 55) return { value: 0, accuracy: 0 };
-    const value = clamp(rawForceRef.current * accuracy, -1, 1);
-    return { value, accuracy };
+    if (tiltError > 55) return { value: 0, accuracy: 0, acceptedPull: false, earlyPull: false, timingQuality: 0 };
+
+    const pullLevel = pullForceRef.current;
+    const overThreshold = pullLevel >= PULL_TRIGGER_THRESHOLD;
+    let acceptedPull = false;
+    let earlyPull = false;
+    let timingQuality = 0;
+
+    if (overThreshold && !pullOverThresholdRef.current) {
+      const lastBeat = lastPullBeatAtRef.current;
+      const interval = lastBeat > 0 ? now - lastBeat : PULL_BEAT_MS;
+      const minAllowed = PULL_BEAT_MS - PULL_BEAT_TOLERANCE_MS;
+
+      if (interval >= minAllowed) {
+        acceptedPull = true;
+        const offset = Math.abs(interval - PULL_BEAT_MS);
+        timingQuality = lastBeat > 0 ? clamp(1 - offset / PULL_BEAT_TOLERANCE_MS, 0, 1) : 0.75;
+        lastPullBeatAtRef.current = now;
+        pullPulseUntilRef.current = now + PULL_PULSE_MS;
+      } else {
+        earlyPull = true;
+      }
+    }
+    pullOverThresholdRef.current = overThreshold;
+
+    const isPulseWindow = now <= pullPulseUntilRef.current;
+    const value = isPulseWindow ? clamp(pullLevel * accuracy, 0, 1) : 0;
+    return { value, accuracy, acceptedPull, earlyPull, timingQuality };
   };
 
   useEffect(() => {
@@ -323,6 +371,9 @@ function App() {
         accuracySum: 0,
         accuracyCount: 0,
       };
+      lastPullBeatAtRef.current = 0;
+      pullPulseUntilRef.current = 0;
+      pullOverThresholdRef.current = false;
       setSoloTimeLeftMs(SOLO_DURATION_MS);
       setSoloScore(0);
       setSoloCombo(0);
@@ -375,7 +426,7 @@ function App() {
       const left = Math.max(0, soloEndAtRef.current - now);
       setSoloTimeLeftMs(left);
 
-      const { value, accuracy } = getOutputForce();
+      const { value, accuracy, acceptedPull, earlyPull, timingQuality } = getOutputForce();
       setForce(value);
       const stats = soloStatsRef.current;
       stats.accuracySum += accuracy;
@@ -386,18 +437,23 @@ function App() {
         return;
       }
 
-      const magnitude = Math.abs(value);
-      const canTrigger = now - soloLastInputAtRef.current >= 180;
-      if (!canTrigger) return;
-
-      if (accuracy < 0.25 || magnitude < 0.28) {
+      if (earlyPull) {
         stats.combo = 0;
         setSoloCombo(0);
         setSoloGrade('INVALID');
         return;
       }
 
-      soloLastInputAtRef.current = now;
+      if (!acceptedPull) return;
+
+      const magnitude = Math.abs(value);
+      if (accuracy < 0.25 || magnitude < 0.25) {
+        stats.combo = 0;
+        setSoloCombo(0);
+        setSoloGrade('WEAK');
+        return;
+      }
+
       let baseScore = 45;
       let grade = 'WEAK';
       if (accuracy > 0.85 && magnitude > 0.6) {
@@ -412,8 +468,9 @@ function App() {
       stats.maxCombo = Math.max(stats.maxCombo, stats.combo);
       const fever = left <= 5000;
       const comboMultiplier = 1 + Math.min(stats.combo, 20) * 0.05;
+      const rhythmMultiplier = 0.7 + timingQuality * 0.3;
       const feverMultiplier = fever ? 1.5 : 1;
-      const gained = Math.round(baseScore * accuracy * comboMultiplier * feverMultiplier);
+      const gained = Math.round(baseScore * accuracy * comboMultiplier * rhythmMultiplier * feverMultiplier);
       stats.score += gained;
       if (fever) stats.feverScore += gained;
 
@@ -626,7 +683,10 @@ function App() {
           <div className="force-center" />
           <div className="force-indicator" style={{ left: `${50 + force * 45}%` }} />
         </div>
-        <p className="subtitle">{team === 'A' ? '왼쪽으로 당기기' : '오른쪽으로 당기기'}</p>
+        <p className="subtitle">
+          폰을 가슴 쪽으로 짧게 당겼다가 원위치 (팀 방향은 자동 반영)
+        </p>
+        <p className="subtitle">리듬: 약 1초 간격으로 당기면 가장 유리합니다.</p>
       </div>
     );
   }
@@ -678,6 +738,7 @@ function App() {
           <p>점수: {soloScore}</p>
           <p>콤보: {soloCombo}</p>
           <p>판정: {soloGrade || '-'}</p>
+          <p>팁: 1초 리듬으로 당기기</p>
         </div>
         <div className="force-gauge">
           <div className="force-center" />

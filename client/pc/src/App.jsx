@@ -55,6 +55,10 @@ const createCheerFans = () =>
     nextAt: Date.now() + 400 + Math.floor(Math.random() * 2000),
   }));
 
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
 function App() {
   const [phase, setPhase] = useState('lobby');
   const [selectedMode, setSelectedMode] = useState('duel');
@@ -76,6 +80,14 @@ function App() {
   const [gainA, setGainA] = useState(0);
   const [gainB, setGainB] = useState(0);
   const [playerJudges, setPlayerJudges] = useState([]);
+  const [rhythmState, setRhythmState] = useState({
+    beatMs: 700,
+    hitWindowMs: 220,
+    nextBeatAt: 0,
+    beatProgress: 0,
+    serverNow: 0,
+  });
+  const [rhythmNow, setRhythmNow] = useState(Date.now());
   const [winner, setWinner] = useState(null);
   const [endReason, setEndReason] = useState('');
   const [roomClosed, setRoomClosed] = useState('');
@@ -145,6 +157,12 @@ function App() {
     return () => clearInterval(ticker);
   }, [phase]);
 
+  useEffect(() => {
+    if (phase !== 'playing') return undefined;
+    const ticker = setInterval(() => setRhythmNow(Date.now()), 33);
+    return () => clearInterval(ticker);
+  }, [phase]);
+
   const bindSocketListeners = (socket) => {
     if (listenersBoundRef.current) return;
 
@@ -178,6 +196,14 @@ function App() {
       setGainA(0);
       setGainB(0);
       setPlayerJudges([]);
+      setRhythmState({
+        beatMs: 700,
+        hitWindowMs: 220,
+        nextBeatAt: Date.now() + 700,
+        beatProgress: 0,
+        serverNow: Date.now(),
+      });
+      setRhythmNow(Date.now());
     });
 
     socket.on('game_state', (state) => {
@@ -194,6 +220,16 @@ function App() {
       setGainA(state.gainA ?? 0);
       setGainB(state.gainB ?? 0);
       setPlayerJudges(state.playerJudges || []);
+      if (state.rhythm) {
+        setRhythmState({
+          beatMs: state.rhythm.beatMs ?? 700,
+          hitWindowMs: state.rhythm.hitWindowMs ?? 220,
+          nextBeatAt: state.rhythm.nextBeatAt ?? 0,
+          beatProgress: state.rhythm.beatProgress ?? 0,
+          serverNow: state.serverNow ?? Date.now(),
+        });
+      }
+      setRhythmNow(state.serverNow ?? Date.now());
     });
 
     socket.on('game_over', (data) => {
@@ -225,6 +261,13 @@ function App() {
       setGainA(0);
       setGainB(0);
       setPlayerJudges([]);
+      setRhythmState({
+        beatMs: 700,
+        hitWindowMs: 220,
+        nextBeatAt: 0,
+        beatProgress: 0,
+        serverNow: 0,
+      });
       setPcFameStatus('');
       setPcRecentFame([]);
       setPhase('waiting');
@@ -637,6 +680,11 @@ function App() {
     -maxOffset,
     Math.min(maxOffset, (scoreGap / sensitivity) * maxOffset)
   );
+  const rhythmBeatMs = Math.max(250, rhythmState.beatMs || 700);
+  const rhythmHitWindowMs = clamp(rhythmState.hitWindowMs || 220, 40, rhythmBeatMs * 0.45);
+  const remainingToBeatMs = Math.max(0, (rhythmState.nextBeatAt || 0) - rhythmNow);
+  const rhythmProgress = clamp(1 - remainingToBeatMs / rhythmBeatMs, 0, 1);
+  const hitZonePercent = clamp((rhythmHitWindowMs / rhythmBeatMs) * 100, 8, 40);
 
   return (
     <div className="container game">
@@ -705,6 +753,19 @@ function App() {
               {entry.team} - {entry.name}: {entry.judge}
             </span>
           ))}
+        </div>
+      )}
+
+      {phase === 'playing' && (
+        <div className={`rhythm-board ${phase === 'playing' ? 'active' : ''}`}>
+          <div className="rhythm-title">RHYTHM TIMING</div>
+          <div className="rhythm-track">
+            <div className="rhythm-hit-zone" style={{ width: `${hitZonePercent}%` }}>
+              HIT
+            </div>
+            <div className="rhythm-marker" style={{ left: `${rhythmProgress * 100}%` }} />
+          </div>
+          <div className="rhythm-caption">모바일에서 마커가 끝에 닿을 때 당기면 점수 획득</div>
         </div>
       )}
 

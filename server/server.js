@@ -44,6 +44,26 @@ const SCORE_CATCHUP_MAX = 0.12;
 const JUDGE_LABELS = new Set(['GOOD', 'GREAT', 'PERFECT', 'MISS']);
 const JUDGE_TONES = new Set(['good', 'great', 'perfect', 'miss']);
 const JUDGE_VISIBLE_MS = 1200;
+const RHYTHM_BEAT_MS = 700;
+const RHYTHM_HIT_WINDOW_MS = 220;
+const RHYTHM_PERFECT_MS = 55;
+const RHYTHM_GREAT_MS = 120;
+const RHYTHM_GOOD_SCORE = 18;
+const RHYTHM_GREAT_SCORE = 28;
+const RHYTHM_PERFECT_SCORE = 40;
+
+function getRhythmJudgeByOffset(absOffsetMs) {
+  if (absOffsetMs <= RHYTHM_PERFECT_MS) {
+    return { label: 'PERFECT', tone: 'perfect', baseScore: RHYTHM_PERFECT_SCORE };
+  }
+  if (absOffsetMs <= RHYTHM_GREAT_MS) {
+    return { label: 'GREAT', tone: 'great', baseScore: RHYTHM_GREAT_SCORE };
+  }
+  if (absOffsetMs <= RHYTHM_HIT_WINDOW_MS) {
+    return { label: 'GOOD', tone: 'good', baseScore: RHYTHM_GOOD_SCORE };
+  }
+  return { label: 'MISS', tone: 'miss', baseScore: 0 };
+}
 
 function normalizeName(raw) {
   return String(raw || '').trim();
@@ -452,6 +472,8 @@ io.on('connection', (socket) => {
       maxCombo: 0,
       accuracySum: 0,
       accuracyCount: 0,
+      pendingScore: 0,
+      lastScoredBeatIndex: -1,
       rhythmJudge: '',
       rhythmJudgeTone: '',
       rhythmJudgeAt: 0,
@@ -476,7 +498,7 @@ io.on('connection', (socket) => {
     emitRoomState(socket.roomId);
   });
 
-  socket.on('force', ({ value, accuracy, judge, judgeTone, judgeAt }) => {
+  socket.on('force', ({ value, accuracy, attempt, judge, judgeTone, judgeAt }) => {
     const room = rooms[socket.roomId];
     if (!room || !room.players[socket.id] || !room.started) return;
 
@@ -489,18 +511,43 @@ io.on('connection', (socket) => {
     player.contribution += Math.abs(clampedForce);
     player.accuracySum += clampedAcc;
     player.accuracyCount += 1;
-    if (JUDGE_LABELS.has(judge)) {
-      player.rhythmJudge = judge;
-      player.rhythmJudgeTone = JUDGE_TONES.has(judgeTone) ? judgeTone : 'good';
-      player.rhythmJudgeAt = Number.isFinite(judgeAt) ? Number(judgeAt) : Date.now();
-    }
+    // Keep backward compatibility for older clients while prioritizing server-side rhythm judgement.
+    const isAttemptedPull = !!attempt || JUDGE_LABELS.has(judge);
+    if (!isAttemptedPull || !room.startedAt) return;
 
-    if (Math.abs(clampedForce) > 0.16 && clampedAcc > 0.38) {
+    const now = Date.now();
+    const beatIndex = Math.max(0, Math.round((now - room.startedAt) / RHYTHM_BEAT_MS));
+    const beatAt = room.startedAt + beatIndex * RHYTHM_BEAT_MS;
+    const offsetMs = now - beatAt;
+    const absOffsetMs = Math.abs(offsetMs);
+    const validStrength = Math.abs(clampedForce) > 0.16 && clampedAcc > 0.34;
+
+    let judgeResult = getRhythmJudgeByOffset(absOffsetMs);
+    let gained = 0;
+
+    if (!validStrength || player.lastScoredBeatIndex === beatIndex) {
+      judgeResult = { label: 'MISS', tone: 'miss', baseScore: 0 };
+    } else if (judgeResult.baseScore > 0) {
       player.combo += 1;
       player.maxCombo = Math.max(player.maxCombo, player.combo);
+      player.lastScoredBeatIndex = beatIndex;
+
+      const timeLeftMs = Math.max(0, room.gameEndsAt - now);
+      const fever = timeLeftMs <= FEVER_THRESHOLD_MS;
+      const comboMultiplier = 1 + Math.min(player.combo, 20) * 0.045;
+      const scoreGap = player.team === 'A' ? room.scoreB - room.scoreA : room.scoreA - room.scoreB;
+      const catchupMultiplier =
+        1 + Math.min(Math.max(0, scoreGap) / SCORE_CATCHUP_SCALE, SCORE_CATCHUP_MAX);
+      const feverMultiplier = fever ? 1.18 : 1;
+      gained = Math.round(judgeResult.baseScore * comboMultiplier * catchupMultiplier * feverMultiplier);
+      player.pendingScore += gained;
     } else {
       player.combo = 0;
     }
+
+    player.rhythmJudge = judgeResult.label;
+    player.rhythmJudgeTone = judgeResult.tone;
+    player.rhythmJudgeAt = now;
   });
 
   socket.on('start_game', () => {
@@ -558,6 +605,8 @@ io.on('connection', (socket) => {
         p.maxCombo = 0;
         p.accuracySum = 0;
         p.accuracyCount = 0;
+        p.pendingScore = 0;
+        p.lastScoredBeatIndex = -1;
         p.rhythmJudge = '';
         p.rhythmJudgeTone = '';
         p.rhythmJudgeAt = 0;
@@ -592,6 +641,10 @@ io.on('connection', (socket) => {
       p.force = 0;
       p.smoothedForce = 0;
       p.lastForceAt = 0;
+      p.pendingScore = 0;
+      p.lastScoredBeatIndex = -1;
+      p.combo = 0;
+      p.maxCombo = 0;
       p.rhythmJudge = '';
       p.rhythmJudgeTone = '';
       p.rhythmJudgeAt = 0;
@@ -819,28 +872,25 @@ setInterval(() => {
     const delta = (pullA - pullB) * (fever ? K * 1.25 : K);
     room.position = Math.max(-100, Math.min(100, room.position + delta));
 
-    if (pullA >= COMBO_THRESHOLD) {
-      room.comboA += 1;
-      room.maxComboA = Math.max(room.maxComboA, room.comboA);
-    } else {
-      room.comboA = 0;
-    }
-    if (pullB >= COMBO_THRESHOLD) {
-      room.comboB += 1;
-      room.maxComboB = Math.max(room.maxComboB, room.comboB);
-    } else {
-      room.comboB = 0;
+    let gainA = 0;
+    let gainB = 0;
+    let comboA = 0;
+    let comboB = 0;
+    for (const player of Object.values(room.players)) {
+      if (player.team === 'A') {
+        gainA += player.pendingScore || 0;
+        comboA = Math.max(comboA, player.combo || 0);
+      } else {
+        gainB += player.pendingScore || 0;
+        comboB = Math.max(comboB, player.combo || 0);
+      }
+      player.pendingScore = 0;
     }
 
-    // Softer combo scaling to reduce early snowball while preserving rhythm rewards.
-    const comboBonusA = room.comboA > 1 ? Math.log1p(Math.min(room.comboA, 20)) * 0.12 : 0;
-    const comboBonusB = room.comboB > 1 ? Math.log1p(Math.min(room.comboB, 20)) * 0.12 : 0;
-    const scoreGapAB = room.scoreB - room.scoreA;
-    const scoreGapBA = room.scoreA - room.scoreB;
-    const catchupA = 1 + Math.min(Math.max(0, scoreGapAB) / SCORE_CATCHUP_SCALE, SCORE_CATCHUP_MAX);
-    const catchupB = 1 + Math.min(Math.max(0, scoreGapBA) / SCORE_CATCHUP_SCALE, SCORE_CATCHUP_MAX);
-    const gainA = pullA > 0.12 ? Math.round(pullA * 3.0 * (1 + comboBonusA) * (fever ? 1.17 : 1) * catchupA) : 0;
-    const gainB = pullB > 0.12 ? Math.round(pullB * 3.0 * (1 + comboBonusB) * (fever ? 1.17 : 1) * catchupB) : 0;
+    room.comboA = comboA;
+    room.comboB = comboB;
+    room.maxComboA = Math.max(room.maxComboA, room.comboA);
+    room.maxComboB = Math.max(room.maxComboB, room.comboB);
     room.gainA = gainA;
     room.gainB = gainB;
     room.scoreA += gainA;
@@ -871,6 +921,11 @@ setInterval(() => {
       continue;
     }
 
+    const elapsedFromStart = Math.max(0, now - room.startedAt);
+    const beatProgressMs = elapsedFromStart % RHYTHM_BEAT_MS;
+    const nextBeatInMs = RHYTHM_BEAT_MS - beatProgressMs;
+    const nextBeatAt = now + nextBeatInMs;
+
     io.to(roomId).emit('game_state', {
       position: room.position,
       forceA: pullA,
@@ -888,6 +943,13 @@ setInterval(() => {
       gainA: room.gainA,
       gainB: room.gainB,
       playerJudges,
+      rhythm: {
+        beatMs: RHYTHM_BEAT_MS,
+        hitWindowMs: RHYTHM_HIT_WINDOW_MS,
+        nextBeatAt,
+        beatProgress: Number((beatProgressMs / RHYTHM_BEAT_MS).toFixed(4)),
+      },
+      serverNow: now,
       timeLeftMs,
       fever,
     });

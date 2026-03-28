@@ -5,11 +5,11 @@ import './App.css';
 const SERVER_URL = window.location.origin;
 const DECAY = 0.9;
 const PULL_SCALE = 0.22;
-const HORIZONTAL_GRAVITY_Z_MIN = 6.5;
+const HORIZONTAL_GRAVITY_Z_MIN = 5.6;
 const HORIZONTAL_GRAVITY_Z_MAX = 9.8;
 const PULL_TRIGGER_THRESHOLD = 0.36;
-const PULL_BEAT_MS = 1000;
-const PULL_BEAT_TOLERANCE_MS = 220;
+const PULL_BEAT_MS = 500;
+const PULL_BEAT_TOLERANCE_MS = 140;
 const PULL_PULSE_MS = 240;
 const BAD_WORDS = ['씨발', '병신', '개새', 'fuck', 'shit', 'bitch'];
 const SOLO_DURATION_MS = 30000;
@@ -332,7 +332,8 @@ function App() {
     const tiltError = getTiltError();
     const horizontalConfidence = horizontalConfidenceRef.current;
     const tiltScore = clamp(1 - tiltError / 40, 0, 1);
-    return tiltScore * (0.4 + horizontalConfidence * 0.6);
+    // Weaken horizontal strictness so off-horizontal posture is less punitive.
+    return tiltScore * (0.7 + horizontalConfidence * 0.3);
   };
 
   const getOutputForce = () => {
@@ -743,7 +744,7 @@ function App() {
         <p className="subtitle">
           수평 유지 후 앞뒤로 짧게 당겼다가 원위치 (팀 방향은 자동 반영)
         </p>
-        <p className="subtitle">리듬: 약 1초 간격으로 당기면 가장 유리합니다.</p>
+        <p className="subtitle">리듬: 약 0.5초 간격으로 당기면 가장 유리합니다.</p>
       </div>
     );
   }
@@ -795,7 +796,7 @@ function App() {
           <p>점수: {soloScore}</p>
           <p>콤보: {soloCombo}</p>
           <p>판정: {soloGrade || '-'}</p>
-          <p>팁: 1초 리듬으로 당기기</p>
+          <p>팁: 0.5초 리듬으로 당기기</p>
         </div>
         <div className="force-gauge">
           <div className="force-center" />

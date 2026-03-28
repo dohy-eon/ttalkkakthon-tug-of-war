@@ -4,7 +4,7 @@
   "description": "Tilt Tug - 모바일 기울기로 조작하는 실시간 웹 기반 줄다리기 게임",
   "private": true,
   "engines": {
-    "node": ">=18"
+    "node": "22.x"
   },
   "scripts": {
     "postinstall": "cd server && npm install && cd ../client/pc && npm install && cd ../mobile && npm install",

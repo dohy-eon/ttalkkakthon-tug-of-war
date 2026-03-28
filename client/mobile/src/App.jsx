@@ -12,7 +12,6 @@ const PULL_BEAT_MS = 450;
 const PULL_BEAT_TOLERANCE_MS = 280;
 const PULL_FIRST_HIT_QUALITY = 0.8;
 const PULL_PULSE_MS = 300;
-const DUEL_ATTEMPT_COOLDOWN_MS = 180;
 const HAPTIC_COOLDOWN_MS = 70;
 const BAD_WORDS = ['씨발', '병신', '개새', 'fuck', 'shit', 'bitch'];
 const SOLO_DURATION_MS = 30000;
@@ -99,8 +98,6 @@ function App() {
   const pullOverThresholdRef = useRef(false);
   const lastPullAxisRef = useRef(0);
   const lastHapticAtRef = useRef(0);
-  const lastDuelAttemptAtRef = useRef(0);
-  const lastServerJudgeAtRef = useRef(0);
   const judgeClearTimeoutRef = useRef(null);
   const perfectFxTimeoutRef = useRef(null);
   const comboRushTimeoutRef = useRef(null);
@@ -194,7 +191,6 @@ function App() {
       setDuelReason('');
       setDuelTimeLeftMs(30000);
       setDuelFever(false);
-      lastServerJudgeAtRef.current = 0;
       updateComboFx(0);
       setScreen('duel_play');
     });
@@ -202,27 +198,6 @@ function App() {
     socket.on('game_state', (state) => {
       setDuelTimeLeftMs(state.timeLeftMs ?? 0);
       setDuelFever(!!state.fever);
-      const mySocketId = socket.id;
-      const myLatestJudge = (state.playerJudges || [])
-        .filter((entry) => entry.socketId === mySocketId)
-        .sort((a, b) => (a.at || 0) - (b.at || 0))
-        .at(-1);
-      if (myLatestJudge && (myLatestJudge.at || 0) > lastServerJudgeAtRef.current) {
-        lastServerJudgeAtRef.current = myLatestJudge.at || Date.now();
-        const label = myLatestJudge.judge || 'MISS';
-        const tone = myLatestJudge.tone || 'good';
-        showJudgeByLabel(label, tone);
-        if (label === 'MISS') {
-          updateComboFx(0);
-        } else {
-          updateComboFx(pullComboRef.current + 1);
-          triggerPullHaptic({
-            fever: !!state.fever,
-            strong: label === 'PERFECT',
-            timingQuality: label === 'PERFECT' ? 1 : label === 'GREAT' ? 0.82 : 0.68,
-          });
-        }
-      }
     });
 
     socket.on('game_over', (data) => {
@@ -276,8 +251,6 @@ function App() {
     pullPulseUntilRef.current = 0;
     pullOverThresholdRef.current = false;
     lastHapticAtRef.current = 0;
-    lastDuelAttemptAtRef.current = 0;
-    lastServerJudgeAtRef.current = 0;
     clearTimeout(judgeClearTimeoutRef.current);
     clearTimeout(perfectFxTimeoutRef.current);
     clearTimeout(comboRushTimeoutRef.current);
@@ -320,7 +293,8 @@ function App() {
     }
   };
 
-  const showJudgeByLabel = (label, tone = 'good') => {
+  const showRhythmJudge = (timingQuality, earlyPull = false) => {
+    const { label, tone } = getRhythmJudgeInfo(timingQuality, earlyPull);
     setRhythmJudge(label);
     setRhythmJudgeTone(tone);
     setJudgeFxTick((v) => v + 1);
@@ -337,11 +311,6 @@ function App() {
     }
     clearTimeout(judgeClearTimeoutRef.current);
     judgeClearTimeoutRef.current = setTimeout(() => setRhythmJudge(''), 300);
-  };
-
-  const showRhythmJudge = (timingQuality, earlyPull = false) => {
-    const { label, tone } = getRhythmJudgeInfo(timingQuality, earlyPull);
-    showJudgeByLabel(label, tone);
   };
 
   const checkSensorSupport = () => {
@@ -521,49 +490,41 @@ function App() {
     return { value, accuracy, acceptedPull, earlyPull, invalidPull, timingQuality };
   };
 
-  const getDuelOutputForce = () => {
-    const now = Date.now();
-    const accuracy = getAccuracy();
-    const tiltError = getTiltError();
-    if (tiltError > 75) {
-      return {
-        value: 0,
-        accuracy: 0,
-        attemptedPull: false,
-      };
-    }
-
-    const pullLevel = pullForceRef.current;
-    const overThreshold = pullLevel >= PULL_TRIGGER_THRESHOLD;
-    const risingEdge = overThreshold && !pullOverThresholdRef.current;
-    let attemptedPull = false;
-    if (risingEdge && now - lastDuelAttemptAtRef.current >= DUEL_ATTEMPT_COOLDOWN_MS) {
-      attemptedPull = true;
-      lastDuelAttemptAtRef.current = now;
-    }
-    pullOverThresholdRef.current = overThreshold;
-
-    const value = overThreshold ? clamp(pullLevel * accuracy, 0, 1) : 0;
-    return { value, accuracy, attemptedPull };
-  };
-
   useEffect(() => {
     clearInterval(emitForceIntervalRef.current);
     if (!socketRef.current || mode !== 'duel') return;
     if (!['duel_wait', 'duel_countdown', 'duel_play'].includes(screen)) return;
 
     emitForceIntervalRef.current = setInterval(() => {
-      const output = getDuelOutputForce();
+      const output = getOutputForce();
       const directional = team === 'A' ? -output.value : output.value;
+      const judgeInfo = output.acceptedPull
+        ? getRhythmJudgeInfo(output.timingQuality, false)
+        : output.invalidPull
+          ? getRhythmJudgeInfo(0, true)
+          : null;
       socketRef.current?.emit('force', {
         value: directional,
         accuracy: output.accuracy,
-        attempt: output.attemptedPull,
+        judge: judgeInfo?.label,
+        judgeTone: judgeInfo?.tone,
+        judgeAt: judgeInfo ? Date.now() : undefined,
       });
+      if (output.acceptedPull) {
+        updateComboFx(pullComboRef.current + 1);
+        showRhythmJudge(output.timingQuality, false);
+        triggerPullHaptic({
+          timingQuality: output.timingQuality,
+          fever: duelTimeLeftMs <= 5000,
+        });
+      } else if (output.invalidPull) {
+        updateComboFx(0);
+        showRhythmJudge(0, true);
+      }
     }, 50);
 
     return () => clearInterval(emitForceIntervalRef.current);
-  }, [screen, mode, team]);
+  }, [screen, mode, team, duelTimeLeftMs]);
 
   useEffect(() => {
     if (screen !== 'solo_countdown') return;

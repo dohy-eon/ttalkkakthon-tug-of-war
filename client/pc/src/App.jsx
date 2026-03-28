@@ -16,6 +16,14 @@ const CHEER_LAYOUT = [
   { left: '84%', bottom: '18%', size: 60 },
   { left: '94%', bottom: '8%', size: 56 },
 ];
+const SIDELINE_CHEER_LAYOUT = [
+  { id: 'l1', side: 'left', top: '12%', depth: 0, delay: '0s', speed: 1.8 },
+  { id: 'l2', side: 'left', top: '34%', depth: 1, delay: '0.3s', speed: 2.2 },
+  { id: 'l3', side: 'left', top: '58%', depth: 0, delay: '0.55s', speed: 2.05 },
+  { id: 'r1', side: 'right', top: '16%', depth: 1, delay: '0.2s', speed: 1.95 },
+  { id: 'r2', side: 'right', top: '40%', depth: 0, delay: '0.45s', speed: 2.25 },
+  { id: 'r3', side: 'right', top: '64%', depth: 1, delay: '0.7s', speed: 2.1 },
+];
 
 const createCheerFans = () =>
   CHEER_LAYOUT.map((layout, idx) => ({
@@ -855,6 +863,25 @@ function App() {
         <div className="end-zone right">
           <span>B 승리</span>
         </div>
+        {phase === 'playing' && (
+          <div className="sideline-cheer-layer" aria-hidden="true">
+            {SIDELINE_CHEER_LAYOUT.map((fan) => (
+              <div
+                key={fan.id}
+                className={`sideline-cheer ${fan.side}`}
+                style={{
+                  top: fan.top,
+                  '--sideline-delay': fan.delay,
+                  '--sideline-speed': `${fan.speed}s`,
+                  '--sideline-depth': fan.depth,
+                }}
+              >
+                <span className="sideline-hand left" />
+                <span className="sideline-hand right" />
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {phase === 'result' && (

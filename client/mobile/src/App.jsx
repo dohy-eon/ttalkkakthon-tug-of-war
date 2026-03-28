@@ -650,15 +650,10 @@ function App() {
         return;
       }
 
-      let baseScore = 35;
-      let grade = 'WEAK';
-      if (accuracy > 0.9 && magnitude > 0.66) {
-        grade = 'PERFECT';
-        baseScore = 120;
-      } else if (accuracy > 0.72 && magnitude > 0.5) {
-        grade = 'GOOD';
-        baseScore = 76;
-      }
+      // Use a continuous quality curve to avoid threshold cliffs around judge boundaries.
+      const quality = clamp(accuracy * 0.55 + magnitude * 0.25 + timingQuality * 0.2, 0, 1);
+      const baseScore = Math.round(32 + Math.pow(quality, 1.15) * 88);
+      const grade = quality >= 0.86 ? 'PERFECT' : quality >= 0.68 ? 'GOOD' : 'WEAK';
 
       stats.combo += 1;
       stats.maxCombo = Math.max(stats.maxCombo, stats.combo);

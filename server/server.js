@@ -36,6 +36,11 @@ const FEVER_THRESHOLD_MS = 5000;
 const ROOM_MODE_DUEL = 'duel';
 const ROOM_MODE_TEAM = 'team';
 const COMBO_THRESHOLD = 0.2;
+const FORCE_SMOOTHING_ALPHA = 0.34;
+const FORCE_STALE_GRACE_MS = 170;
+const FORCE_STALE_DECAY_PER_TICK = 0.9;
+const SCORE_CATCHUP_SCALE = 900;
+const SCORE_CATCHUP_MAX = 0.12;
 const JUDGE_LABELS = new Set(['GOOD', 'GREAT', 'PERFECT', 'MISS']);
 const JUDGE_TONES = new Set(['good', 'great', 'perfect', 'miss']);
 const JUDGE_VISIBLE_MS = 1200;
@@ -507,6 +512,8 @@ io.on('connection', (socket) => {
       name: validation.name,
       team,
       force: 0,
+      smoothedForce: 0,
+      lastForceAt: 0,
       accuracy: 0,
       ready: false,
       sensorGranted: false,
@@ -549,6 +556,7 @@ io.on('connection', (socket) => {
     const clampedForce = Math.max(-1, Math.min(1, Number(value) || 0));
     const clampedAcc = Math.max(0, Math.min(1, Number(accuracy) || 0));
     player.force = clampedForce;
+    player.lastForceAt = Date.now();
     player.accuracy = clampedAcc;
     player.contribution += Math.abs(clampedForce);
     player.accuracySum += clampedAcc;
@@ -615,6 +623,8 @@ io.on('connection', (socket) => {
       currentRoom.gameEndsAt = currentRoom.startedAt + DUEL_DURATION_MS;
       Object.values(currentRoom.players).forEach((p) => {
         p.force = 0;
+        p.smoothedForce = 0;
+        p.lastForceAt = 0;
         p.contribution = 0;
         p.combo = 0;
         p.maxCombo = 0;
@@ -652,6 +662,8 @@ io.on('connection', (socket) => {
     room.countdownInterval = null;
     Object.values(room.players).forEach((p) => {
       p.force = 0;
+      p.smoothedForce = 0;
+      p.lastForceAt = 0;
       p.rhythmJudge = '';
       p.rhythmJudgeTone = '';
       p.rhythmJudgeAt = 0;
@@ -871,6 +883,7 @@ setInterval(() => {
   for (const [roomId, room] of Object.entries(rooms)) {
     if (!room.started || room.winner) continue;
 
+    const now = Date.now();
     let forceA = 0;
     let forceB = 0;
     let effectiveA = 0;
@@ -879,7 +892,17 @@ setInterval(() => {
     let countB = 0;
 
     for (const player of Object.values(room.players)) {
-      const weightedForce = player.force * (0.45 + player.accuracy * 0.55);
+      const elapsedMs = now - (player.lastForceAt || 0);
+      let staleDecay = 1;
+      if (player.lastForceAt > 0 && elapsedMs > FORCE_STALE_GRACE_MS) {
+        const staleTicks = (elapsedMs - FORCE_STALE_GRACE_MS) / (1000 / TICK_RATE);
+        staleDecay = Math.pow(FORCE_STALE_DECAY_PER_TICK, Math.max(0, staleTicks));
+      }
+      const targetForce = player.force * staleDecay;
+      player.smoothedForce += (targetForce - player.smoothedForce) * FORCE_SMOOTHING_ALPHA;
+
+      // client already applies posture accuracy to value; avoid double penalty on server.
+      const weightedForce = player.smoothedForce;
       if (player.team === 'A') {
         forceA += weightedForce;
         effectiveA += Math.max(0, -weightedForce);
@@ -913,15 +936,19 @@ setInterval(() => {
       room.comboB = 0;
     }
 
-    const comboBonusA = room.comboA > 1 ? Math.min(room.comboA, 20) * 0.09 : 0;
-    const comboBonusB = room.comboB > 1 ? Math.min(room.comboB, 20) * 0.09 : 0;
-    const gainA = pullA > 0.12 ? Math.round((pullA * 3.2 + comboBonusA) * (fever ? 1.2 : 1)) : 0;
-    const gainB = pullB > 0.12 ? Math.round((pullB * 3.2 + comboBonusB) * (fever ? 1.2 : 1)) : 0;
+    // Softer combo scaling to reduce early snowball while preserving rhythm rewards.
+    const comboBonusA = room.comboA > 1 ? Math.log1p(Math.min(room.comboA, 20)) * 0.12 : 0;
+    const comboBonusB = room.comboB > 1 ? Math.log1p(Math.min(room.comboB, 20)) * 0.12 : 0;
+    const scoreGapAB = room.scoreB - room.scoreA;
+    const scoreGapBA = room.scoreA - room.scoreB;
+    const catchupA = 1 + Math.min(Math.max(0, scoreGapAB) / SCORE_CATCHUP_SCALE, SCORE_CATCHUP_MAX);
+    const catchupB = 1 + Math.min(Math.max(0, scoreGapBA) / SCORE_CATCHUP_SCALE, SCORE_CATCHUP_MAX);
+    const gainA = pullA > 0.12 ? Math.round(pullA * 3.0 * (1 + comboBonusA) * (fever ? 1.17 : 1) * catchupA) : 0;
+    const gainB = pullB > 0.12 ? Math.round(pullB * 3.0 * (1 + comboBonusB) * (fever ? 1.17 : 1) * catchupB) : 0;
     room.gainA = gainA;
     room.gainB = gainB;
     room.scoreA += gainA;
     room.scoreB += gainB;
-    const now = Date.now();
     const playerJudges = Object.entries(room.players)
       .map(([socketId, player]) => ({
         socketId,

@@ -666,6 +666,8 @@ body {
   max-width: 1200px;
   flex: 1;
   gap: 16px;
+  position: relative;
+  overflow: visible;
 }
 
 .end-zone {
@@ -759,6 +761,80 @@ body {
   pointer-events: none;
 }
 
+.sideline-cheer-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.sideline-cheer {
+  position: absolute;
+  width: 48px;
+  height: 72px;
+  --arm-thickness: 11px;
+  --arm-length: 34px;
+  animation: sidelineBounce var(--sideline-speed, 2s) ease-in-out var(--sideline-delay, 0s) infinite;
+  opacity: calc(0.68 + var(--sideline-depth, 0) * 0.2);
+  filter: drop-shadow(0 8px 14px rgba(15, 23, 42, 0.2));
+}
+
+.sideline-cheer.left {
+  left: 86px;
+}
+
+.sideline-cheer.right {
+  right: 86px;
+}
+
+.sideline-hand {
+  position: absolute;
+  width: var(--arm-thickness);
+  height: var(--arm-length);
+  bottom: 6px;
+  border-radius: 999px;
+  transform-origin: center bottom;
+  animation: sidelineWave 0.62s ease-in-out var(--sideline-delay, 0s) infinite alternate;
+}
+
+.sideline-hand::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -10px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  transform: translateX(-50%);
+}
+
+.sideline-cheer.left .sideline-hand {
+  background: linear-gradient(180deg, rgba(147, 197, 253, 0.95), rgba(59, 130, 246, 0.78));
+}
+
+.sideline-cheer.right .sideline-hand {
+  background: linear-gradient(180deg, rgba(252, 165, 165, 0.95), rgba(239, 68, 68, 0.78));
+}
+
+.sideline-cheer.left .sideline-hand::before {
+  background: rgba(147, 197, 253, 0.96);
+}
+
+.sideline-cheer.right .sideline-hand::before {
+  background: rgba(252, 165, 165, 0.96);
+}
+
+.sideline-hand.left {
+  left: 10px;
+  transform: rotate(-30deg);
+}
+
+.sideline-hand.right {
+  right: 10px;
+  transform: rotate(30deg);
+  animation-direction: alternate-reverse;
+}
+
 .cheer-fan {
   position: absolute;
   width: var(--fan-size);
@@ -834,6 +910,38 @@ body {
   }
   50% {
     transform: translateX(-50%) translateY(-3px);
+  }
+}
+
+@keyframes sidelineBounce {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes sidelineWave {
+  0% {
+    transform: rotate(-34deg);
+  }
+  100% {
+    transform: rotate(-8deg);
+  }
+}
+
+.sideline-hand.right {
+  animation-name: sidelineWaveRight;
+}
+
+@keyframes sidelineWaveRight {
+  0% {
+    transform: rotate(34deg);
+  }
+  100% {
+    transform: rotate(8deg);
   }
 }
 

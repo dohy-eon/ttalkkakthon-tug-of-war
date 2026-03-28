@@ -35,7 +35,7 @@ const DUEL_DURATION_MS = 30000;
 const FEVER_THRESHOLD_MS = 5000;
 const ROOM_MODE_DUEL = 'duel';
 const ROOM_MODE_TEAM = 'team';
-const COMBO_THRESHOLD = 0.15;
+const COMBO_THRESHOLD = 0.2;
 const JUDGE_LABELS = new Set(['GOOD', 'GREAT', 'PERFECT', 'MISS']);
 const JUDGE_TONES = new Set(['good', 'great', 'perfect', 'miss']);
 const JUDGE_VISIBLE_MS = 1200;
@@ -559,7 +559,7 @@ io.on('connection', (socket) => {
       player.rhythmJudgeAt = Number.isFinite(judgeAt) ? Number(judgeAt) : Date.now();
     }
 
-    if (Math.abs(clampedForce) > 0.12 && clampedAcc > 0.3) {
+    if (Math.abs(clampedForce) > 0.16 && clampedAcc > 0.38) {
       player.combo += 1;
       player.maxCombo = Math.max(player.maxCombo, player.combo);
     } else {
@@ -879,7 +879,7 @@ setInterval(() => {
     let countB = 0;
 
     for (const player of Object.values(room.players)) {
-      const weightedForce = player.force * (0.6 + player.accuracy * 0.4);
+      const weightedForce = player.force * (0.45 + player.accuracy * 0.55);
       if (player.team === 'A') {
         forceA += weightedForce;
         effectiveA += Math.max(0, -weightedForce);
@@ -913,10 +913,10 @@ setInterval(() => {
       room.comboB = 0;
     }
 
-    const comboBonusA = room.comboA > 1 ? Math.min(room.comboA, 20) * 0.12 : 0;
-    const comboBonusB = room.comboB > 1 ? Math.min(room.comboB, 20) * 0.12 : 0;
-    const gainA = pullA > 0.08 ? Math.round((pullA * 4 + comboBonusA) * (fever ? 1.3 : 1)) : 0;
-    const gainB = pullB > 0.08 ? Math.round((pullB * 4 + comboBonusB) * (fever ? 1.3 : 1)) : 0;
+    const comboBonusA = room.comboA > 1 ? Math.min(room.comboA, 20) * 0.09 : 0;
+    const comboBonusB = room.comboB > 1 ? Math.min(room.comboB, 20) * 0.09 : 0;
+    const gainA = pullA > 0.12 ? Math.round((pullA * 3.2 + comboBonusA) * (fever ? 1.2 : 1)) : 0;
+    const gainB = pullB > 0.12 ? Math.round((pullB * 3.2 + comboBonusB) * (fever ? 1.2 : 1)) : 0;
     room.gainA = gainA;
     room.gainB = gainB;
     room.scoreA += gainA;

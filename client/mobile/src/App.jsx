@@ -7,9 +7,9 @@ const DECAY = 0.82;
 const PULL_SCALE = 0.4;
 const HORIZONTAL_GRAVITY_Z_MIN = 4.8;
 const HORIZONTAL_GRAVITY_Z_MAX = 9.8;
-const PULL_TRIGGER_THRESHOLD = 0.5;
+const PULL_TRIGGER_THRESHOLD = 0.58;
 const PULL_BEAT_MS = 450;
-const PULL_BEAT_TOLERANCE_MS = 250;
+const PULL_BEAT_TOLERANCE_MS = 210;
 const PULL_PULSE_MS = 240;
 const HAPTIC_COOLDOWN_MS = 70;
 const BAD_WORDS = ['씨발', '병신', '개새', 'fuck', 'shit', 'bitch'];
@@ -21,8 +21,8 @@ function clamp(value, min, max) {
 
 function getRhythmJudgeInfo(timingQuality, earlyPull = false) {
   if (earlyPull) return { label: 'MISS', tone: 'miss' };
-  if (timingQuality >= 0.82) return { label: 'PERFECT', tone: 'perfect' };
-  if (timingQuality >= 0.58) return { label: 'GREAT', tone: 'great' };
+  if (timingQuality >= 0.88) return { label: 'PERFECT', tone: 'perfect' };
+  if (timingQuality >= 0.66) return { label: 'GREAT', tone: 'great' };
   return { label: 'GOOD', tone: 'good' };
 }
 
@@ -299,7 +299,7 @@ function App() {
   const triggerPullHaptic = ({ timingQuality = 0, fever = false, strong = false } = {}) => {
     if (typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function') return;
     // Trigger haptics only on GREAT+ rhythm hits.
-    if (!strong && timingQuality < 0.58) return;
+    if (!strong && timingQuality < 0.66) return;
     const now = Date.now();
     if (now - lastHapticAtRef.current < HAPTIC_COOLDOWN_MS) return;
     lastHapticAtRef.current = now;
@@ -308,7 +308,7 @@ function App() {
       navigator.vibrate(fever ? [22, 16, 28] : [16, 12, 22]);
       return;
     }
-    if (timingQuality >= 0.58) {
+    if (timingQuality >= 0.66) {
       navigator.vibrate(fever ? [18, 10, 18] : [12, 8, 12]);
       return;
     }
@@ -449,9 +449,8 @@ function App() {
   const getAccuracy = () => {
     const tiltError = getTiltError();
     const horizontalConfidence = horizontalConfidenceRef.current;
-    const tiltScore = clamp(1 - tiltError / 40, 0, 1);
-    // Weaken horizontal strictness so off-horizontal posture is less punitive.
-    return tiltScore * (0.7 + horizontalConfidence * 0.3);
+    const tiltScore = clamp(1 - tiltError / 36, 0, 1);
+    return tiltScore * (0.62 + horizontalConfidence * 0.38);
   };
 
   const getOutputForce = () => {
@@ -643,7 +642,7 @@ function App() {
       if (!acceptedPull) return;
 
       const magnitude = Math.abs(value);
-      if (accuracy < 0.25 || magnitude < 0.25) {
+      if (accuracy < 0.33 || magnitude < 0.32) {
         stats.combo = 0;
         setSoloCombo(0);
         setSoloGrade('WEAK');
@@ -651,23 +650,23 @@ function App() {
         return;
       }
 
-      let baseScore = 45;
+      let baseScore = 35;
       let grade = 'WEAK';
-      if (accuracy > 0.85 && magnitude > 0.6) {
+      if (accuracy > 0.9 && magnitude > 0.66) {
         grade = 'PERFECT';
-        baseScore = 140;
-      } else if (accuracy > 0.65 && magnitude > 0.45) {
+        baseScore = 120;
+      } else if (accuracy > 0.72 && magnitude > 0.5) {
         grade = 'GOOD';
-        baseScore = 90;
+        baseScore = 76;
       }
 
       stats.combo += 1;
       stats.maxCombo = Math.max(stats.maxCombo, stats.combo);
       updateComboFx(stats.combo);
       const fever = left <= 5000;
-      const comboMultiplier = 1 + Math.min(stats.combo, 20) * 0.05;
-      const rhythmMultiplier = 0.7 + timingQuality * 0.3;
-      const feverMultiplier = fever ? 1.5 : 1;
+      const comboMultiplier = 1 + Math.min(stats.combo, 20) * 0.04;
+      const rhythmMultiplier = 0.65 + timingQuality * 0.35;
+      const feverMultiplier = fever ? 1.35 : 1;
       const gained = Math.round(baseScore * accuracy * comboMultiplier * rhythmMultiplier * feverMultiplier);
       stats.score += gained;
       if (fever) stats.feverScore += gained;

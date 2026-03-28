@@ -41,6 +41,20 @@ body {
   text-align: center;
 }
 
+.main-logo {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.main-logo-lobby {
+  max-width: 440px;
+}
+
+.main-logo-header {
+  max-width: 200px;
+}
+
 .title {
   font-size: 72px;
   font-weight: 900;
@@ -1012,6 +1026,10 @@ body {
     font-size: 48px;
   }
 
+  .main-logo-lobby {
+    max-width: 340px;
+  }
+
   .end-zone {
     width: 50px;
     height: 140px;
@@ -1065,6 +1083,10 @@ body {
     font-size: 36px;
   }
 
+  .main-logo-lobby {
+    max-width: 250px;
+  }
+
   .subtitle {
     font-size: 14px;
   }
@@ -1087,6 +1109,10 @@ body {
 
   .title-small {
     font-size: 20px;
+  }
+
+  .main-logo-header {
+    max-width: 150px;
   }
 
   .room-code {

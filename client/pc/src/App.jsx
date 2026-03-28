@@ -5,6 +5,7 @@ import './App.css';
 const SERVER_URL = window.location.origin;
 const CHEER_MESSAGES = ['와', '잘한다', '화이팅', '이겨라'];
 const PC_BASE_URL = import.meta.env.BASE_URL;
+const MAIN_LOGO_SRC = `${PC_BASE_URL}mainLogo_tug.png`;
 const CHEER_FACE_SOURCES = [
   `${PC_BASE_URL}cheerleaders/face-01.png`,
   `${PC_BASE_URL}cheerleaders/face-02.png`,
@@ -59,7 +60,6 @@ function App() {
   const [selectedMode, setSelectedMode] = useState('duel');
   const [roomMode, setRoomMode] = useState('duel');
   const [roomId, setRoomId] = useState('');
-  const [position, setPosition] = useState(0);
   const [teamACount, setTeamACount] = useState(0);
   const [teamBCount, setTeamBCount] = useState(0);
   const [playerCount, setPlayerCount] = useState(0);
@@ -179,7 +179,6 @@ function App() {
     });
 
     socket.on('game_state', (state) => {
-      setPosition(state.position);
       setTeamACount(state.teamACount);
       setTeamBCount(state.teamBCount);
       setTimeLeftMs(state.timeLeftMs ?? 0);
@@ -209,7 +208,6 @@ function App() {
 
     socket.on('game_reset', () => {
       stopHonorLiveCamera();
-      setPosition(0);
       setWinner(null);
       setEndReason('');
       setCountdown(null);
@@ -287,7 +285,6 @@ function App() {
       listenersBoundRef.current = false;
     }
     setRoomId('');
-    setPosition(0);
     setWinner(null);
     setEndReason('');
     setCountdown(null);
@@ -382,6 +379,15 @@ function App() {
     }
     try {
       stopHonorLiveCamera();
+      setHonorCameraOpen(true);
+      // Ensure the preview video is mounted before binding stream.
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      const video = honorCameraVideoRef.current;
+      if (!video) {
+        setHonorCameraOpen(false);
+        setPcFameStatus('카메라 미리보기를 찾을 수 없습니다.');
+        return;
+      }
       setPcFameStatus('카메라 연결 중...');
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
@@ -392,17 +398,12 @@ function App() {
         audio: false,
       });
       honorCameraStreamRef.current = stream;
-      const video = honorCameraVideoRef.current;
-      if (!video) {
-        setPcFameStatus('카메라 미리보기를 찾을 수 없습니다.');
-        return;
-      }
       video.srcObject = stream;
       await waitForVideoMetadata(video);
       await video.play();
-      setHonorCameraOpen(true);
       setPcFameStatus('카메라 준비 완료!');
     } catch (error) {
+      stopHonorLiveCamera();
       setPcFameStatus('카메라 접근 실패: 권한을 확인해주세요.');
     }
   };
@@ -512,7 +513,7 @@ function App() {
     return (
       <div className="container lobby">
         <div className="logo-area">
-          <h1 className="title">줄?다리기?</h1>
+          <img className="main-logo main-logo-lobby" src={MAIN_LOGO_SRC} alt="줄?다리기? 로고" />
           <p className="subtitle">모바일 기울기로 조작하는 줄?다리기?</p>
         </div>
         <div className="mode-selector">
@@ -647,11 +648,14 @@ function App() {
   const mobileUrl = `${window.location.origin}/mobile?room=${roomId}`;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(mobileUrl)}`;
   const timeLeftSec = Math.ceil(timeLeftMs / 1000);
+  const scoreGap = scoreA - scoreB;
+  // 점수 격차를 줄 위치(-100~100)로 완만하게 매핑해 UI가 우세 팀 방향으로 이동하도록 한다.
+  const uiPosition = Math.tanh(scoreGap / 280) * 100;
 
   return (
     <div className="container game">
       <header className="game-header">
-        <h1 className="title-small">줄?다리기?</h1>
+        <img className="main-logo main-logo-header" src={MAIN_LOGO_SRC} alt="줄?다리기? 로고" />
         <div className="room-badge">
           ROOM <span className="room-code">{roomId}</span>
         </div>
@@ -768,7 +772,7 @@ function App() {
           </div>
           <div
             className="rope-marker"
-            style={{ left: `${50 + position * 0.5}%` }}
+            style={{ left: `${50 + uiPosition * 0.5}%` }}
           >
             <div className="flag" />
             <div className="rope-line" />

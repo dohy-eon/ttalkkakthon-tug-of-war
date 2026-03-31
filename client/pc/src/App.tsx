@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef } from 'react';
+// TS migration note: keep types loose first, then tighten.
+import { useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import './App.css';
 
 const SERVER_URL = window.location.origin;
-const CHEER_MESSAGES = ['와', '잘한다', '화이팅', '이겨라'];
+const CHEER_MESSAGES = ['와', '잘한다', '화이팅', '이겨라'] as const;
 const PC_BASE_URL = import.meta.env.BASE_URL;
 const MAIN_LOGO_SRC = `${PC_BASE_URL}mainLogo_tug.png`;
 const CHEER_FACE_SOURCES = [
@@ -43,6 +44,36 @@ const SIDELINE_CHEER_LAYOUT = [
   { id: 'r5', side: 'right', top: '70%', depth: 1, delay: '0.82s', speed: 2.12 },
 ];
 
+type Team = 'A' | 'B';
+type Mode = 'duel' | 'team';
+type Phase = 'lobby' | 'waiting' | 'countdown' | 'playing' | 'result' | 'closed' | 'hall';
+
+type GamePlayer = {
+  socketId: string;
+  name: string;
+  team: Team;
+  ready: boolean;
+  contribution: number;
+};
+
+type FameRecord = {
+  id: string;
+  type?: 'honor' | 'shame';
+  mode?: Mode;
+  displayName: string;
+  imageDataUrl: string;
+  createdAt?: number;
+};
+
+type PlayerJudge = {
+  socketId: string;
+  name: string;
+  team: Team;
+  judge: string;
+  tone?: string;
+  at: number;
+};
+
 const createCheerFans = () =>
   CHEER_LAYOUT.map((layout, idx) => ({
     id: `fan-${idx}`,
@@ -56,42 +87,43 @@ const createCheerFans = () =>
   }));
 
 function App() {
-  const [phase, setPhase] = useState('lobby');
-  const [selectedMode, setSelectedMode] = useState('duel');
-  const [roomMode, setRoomMode] = useState('duel');
-  const [roomId, setRoomId] = useState('');
-  const [teamACount, setTeamACount] = useState(0);
-  const [teamBCount, setTeamBCount] = useState(0);
-  const [playerCount, setPlayerCount] = useState(0);
-  const [players, setPlayers] = useState([]);
-  const [countdown, setCountdown] = useState(null);
-  const [timeLeftMs, setTimeLeftMs] = useState(30000);
-  const [fever, setFever] = useState(false);
-  const [scoreA, setScoreA] = useState(0);
-  const [scoreB, setScoreB] = useState(0);
-  const [comboA, setComboA] = useState(0);
-  const [comboB, setComboB] = useState(0);
-  const [maxComboA, setMaxComboA] = useState(0);
-  const [maxComboB, setMaxComboB] = useState(0);
-  const [gainA, setGainA] = useState(0);
-  const [gainB, setGainB] = useState(0);
-  const [playerJudges, setPlayerJudges] = useState([]);
-  const [winner, setWinner] = useState(null);
-  const [endReason, setEndReason] = useState('');
-  const [roomClosed, setRoomClosed] = useState('');
-  const [hallHonor, setHallHonor] = useState([]);
-  const [hallShame, setHallShame] = useState([]);
-  const [pcFameStatus, setPcFameStatus] = useState('');
-  const [pcRecentFame, setPcRecentFame] = useState([]);
-  const [honorCameraOpen, setHonorCameraOpen] = useState(false);
-  const [shameCameraOpen, setShameCameraOpen] = useState(false);
+  const [phase, setPhase] = useState<Phase>('lobby');
+  const [selectedMode, setSelectedMode] = useState<Mode>('duel');
+  const [roomMode, setRoomMode] = useState<Mode>('duel');
+  const [roomId, setRoomId] = useState<string>('');
+  const [teamACount, setTeamACount] = useState<number>(0);
+  const [teamBCount, setTeamBCount] = useState<number>(0);
+  const [playerCount, setPlayerCount] = useState<number>(0);
+  const [players, setPlayers] = useState<GamePlayer[]>([]);
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const [timeLeftMs, setTimeLeftMs] = useState<number>(30000);
+  const [fever, setFever] = useState<boolean>(false);
+  const [scoreA, setScoreA] = useState<number>(0);
+  const [scoreB, setScoreB] = useState<number>(0);
+  const [comboA, setComboA] = useState<number>(0);
+  const [comboB, setComboB] = useState<number>(0);
+  const [maxComboA, setMaxComboA] = useState<number>(0);
+  const [maxComboB, setMaxComboB] = useState<number>(0);
+  const [gainA, setGainA] = useState<number>(0);
+  const [gainB, setGainB] = useState<number>(0);
+  const [playerJudges, setPlayerJudges] = useState<PlayerJudge[]>([]);
+  const [winner, setWinner] = useState<Team | 'DRAW' | null>(null);
+  const [endReason, setEndReason] = useState<string>('');
+  const [roomClosed, setRoomClosed] = useState<string>('');
+  const [hallHonor, setHallHonor] = useState<FameRecord[]>([]);
+  const [hallShame, setHallShame] = useState<FameRecord[]>([]);
+  const [pcFameStatus, setPcFameStatus] = useState<string>('');
+  const [pcRecentFame, setPcRecentFame] = useState<FameRecord[]>([]);
+  const [honorCameraOpen, setHonorCameraOpen] = useState<boolean>(false);
+  const [shameCameraOpen, setShameCameraOpen] = useState<boolean>(false);
   const [cheerFans, setCheerFans] = useState(createCheerFans);
-  const socketRef = useRef(null);
-  const listenersBoundRef = useRef(false);
-  const honorCameraVideoRef = useRef(null);
-  const honorCameraStreamRef = useRef(null);
-  const shameCameraVideoRef = useRef(null);
-  const shameCameraStreamRef = useRef(null);
+
+  const socketRef = useRef<ReturnType<typeof io> | null>(null);
+  const listenersBoundRef = useRef<boolean>(false);
+  const honorCameraVideoRef = useRef<HTMLVideoElement | null>(null);
+  const honorCameraStreamRef = useRef<MediaStream | null>(null);
+  const shameCameraVideoRef = useRef<HTMLVideoElement | null>(null);
+  const shameCameraStreamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
     return () => {
@@ -133,20 +165,20 @@ function App() {
     return () => clearInterval(ticker);
   }, [phase]);
 
-  const bindSocketListeners = (socket) => {
+  const bindSocketListeners = (socket: ReturnType<typeof io>) => {
     if (listenersBoundRef.current) return;
 
-    socket.on('room_state', (data) => {
-      setRoomMode(data.mode || 'duel');
-      setPlayerCount(data.playerCount);
-      setTeamACount(data.teamACount);
-      setTeamBCount(data.teamBCount);
-      setPlayers(data.players || []);
+    socket.on('room_state', (data: any) => {
+      setRoomMode((data.mode as Mode) || 'duel');
+      setPlayerCount(Number(data.playerCount) || 0);
+      setTeamACount(Number(data.teamACount) || 0);
+      setTeamBCount(Number(data.teamBCount) || 0);
+      setPlayers((data.players as GamePlayer[]) || []);
       setPhase((prev) => (data.started && prev !== 'playing' ? 'playing' : prev));
     });
 
-    socket.on('game_countdown', ({ seconds }) => {
-      setCountdown(seconds);
+    socket.on('game_countdown', ({ seconds }: any) => {
+      setCountdown(Number(seconds) || 0);
       setPhase('countdown');
     });
 
@@ -168,9 +200,9 @@ function App() {
       setPlayerJudges([]);
     });
 
-    socket.on('game_state', (state) => {
-      setTeamACount(state.teamACount);
-      setTeamBCount(state.teamBCount);
+    socket.on('game_state', (state: any) => {
+      setTeamACount(Number(state.teamACount) || 0);
+      setTeamBCount(Number(state.teamBCount) || 0);
       setTimeLeftMs(state.timeLeftMs ?? 0);
       setFever(!!state.fever);
       setScoreA(state.scoreA ?? 0);
@@ -181,15 +213,15 @@ function App() {
       setMaxComboB(state.maxComboB ?? 0);
       setGainA(state.gainA ?? 0);
       setGainB(state.gainB ?? 0);
-      setPlayerJudges(state.playerJudges || []);
+      setPlayerJudges((state.playerJudges as PlayerJudge[]) || []);
     });
 
-    socket.on('game_over', (data) => {
+    socket.on('game_over', (data: any) => {
       stopHonorLiveCamera();
       stopShameLiveCamera();
       setWinner(data.winner);
       setEndReason(data.reason || '');
-      setPlayers(data.players || []);
+      setPlayers((data.players as GamePlayer[]) || []);
       setPcFameStatus('');
       setPcRecentFame([]);
       setPlayerJudges([]);
@@ -218,7 +250,7 @@ function App() {
       setPhase('waiting');
     });
 
-    socket.on('room_closed', ({ reason }) => {
+    socket.on('room_closed', ({ reason }: any) => {
       setRoomClosed(reason || 'host_disconnected');
       setPhase('closed');
     });
@@ -236,9 +268,9 @@ function App() {
 
   const createRoom = () => {
     const socket = ensureSocket();
-    socket.emit('create_room', { mode: selectedMode }, (data) => {
+    socket.emit('create_room', { mode: selectedMode }, (data: any) => {
       setRoomId(data.roomId);
-      setRoomMode(data.mode || selectedMode);
+      setRoomMode((data.mode as Mode) || selectedMode);
       setPhase('waiting');
     });
   };
@@ -281,12 +313,12 @@ function App() {
 
   const fetchHallRecords = () => {
     const socket = ensureSocket();
-    socket.emit('get_fame_records', { type: 'honor', limit: 24 }, (res) => {
-      setHallHonor(res?.records || []);
+    socket.emit('get_fame_records', { type: 'honor', limit: 24 }, (res: any) => {
+      setHallHonor((res?.records as FameRecord[]) || []);
       setPhase('hall');
     });
-    socket.emit('get_fame_records', { type: 'shame', limit: 24 }, (res) => {
-      setHallShame(res?.records || []);
+    socket.emit('get_fame_records', { type: 'shame', limit: 24 }, (res: any) => {
+      setHallShame((res?.records as FameRecord[]) || []);
     });
   };
 
@@ -312,8 +344,8 @@ function App() {
     setShameCameraOpen(false);
   };
 
-  const waitForVideoMetadata = (video) =>
-    new Promise((resolve, reject) => {
+  const waitForVideoMetadata = (video: HTMLVideoElement) =>
+    new Promise<void>((resolve, reject) => {
       if (video.videoWidth > 0 && video.videoHeight > 0) {
         resolve();
         return;
@@ -333,7 +365,7 @@ function App() {
       video.addEventListener('loadedmetadata', onLoadedMetadata);
     });
 
-  const openLiveCamera = async (type) => {
+  const openLiveCamera = async (type: 'honor' | 'shame') => {
     const isHonor = type === 'honor';
     const stopSelfCamera = isHonor ? stopHonorLiveCamera : stopShameLiveCamera;
     const stopOtherCamera = isHonor ? stopShameLiveCamera : stopHonorLiveCamera;
@@ -350,7 +382,6 @@ function App() {
       stopSelfCamera();
       stopOtherCamera();
       setCameraOpen(true);
-      // Ensure the preview video is mounted before binding stream.
       await new Promise((resolve) => requestAnimationFrame(resolve));
       const video = videoRef.current;
       if (!video) {
@@ -372,13 +403,13 @@ function App() {
       await waitForVideoMetadata(video);
       await video.play();
       setPcFameStatus(`${cameraLabel} 카메라 준비 완료!`);
-    } catch (error) {
+    } catch {
       stopSelfCamera();
       setPcFameStatus('카메라 접근 실패: 권한을 확인해주세요.');
     }
   };
 
-  const captureLivePhoto = (type) => {
+  const captureLivePhoto = (type: 'honor' | 'shame') => {
     const isHonor = type === 'honor';
     const videoRef = isHonor ? honorCameraVideoRef : shameCameraVideoRef;
     const streamRef = isHonor ? honorCameraStreamRef : shameCameraStreamRef;
@@ -407,7 +438,7 @@ function App() {
     submitPcFameRecord(type, imageDataUrl);
   };
 
-  const submitPcFameRecord = (type, imageDataUrl) => {
+  const submitPcFameRecord = (type: 'honor' | 'shame', imageDataUrl: string) => {
     if (!imageDataUrl) {
       setPcFameStatus(type === 'honor' ? '명예 사진을 먼저 촬영해주세요.' : '불명예 사진을 먼저 촬영해주세요.');
       return;
@@ -424,12 +455,12 @@ function App() {
         displayName,
         imageDataUrl,
       },
-      (res) => {
+      (res: any) => {
         if (res?.error) {
           setPcFameStatus(res.error);
           return;
         }
-        const created = {
+        const created: FameRecord = {
           id: res.recordId || `${Date.now()}`,
           type,
           mode: roomMode,
@@ -445,17 +476,11 @@ function App() {
     );
   };
 
-  const openPcCapture = (type) => {
-    openLiveCamera(type);
-  };
-
   const readyCount = players.filter((p) => p.ready).length;
   const canStart =
     phase === 'waiting' &&
     readyCount === playerCount &&
-    (roomMode === 'duel'
-      ? playerCount >= 2
-      : playerCount >= 4 && teamACount >= 2 && teamBCount >= 2);
+    (roomMode === 'duel' ? playerCount >= 2 : playerCount >= 4 && teamACount >= 2 && teamBCount >= 2);
 
   if (phase === 'lobby') {
     return (
@@ -479,7 +504,9 @@ function App() {
           </button>
         </div>
         <div className="lobby-actions">
-          <button className="btn-primary" onClick={createRoom}>방 만들기</button>
+          <button className="btn-primary" onClick={createRoom}>
+            방 만들기
+          </button>
           <button className="btn-secondary" onClick={fetchHallRecords}>
             전당 보기
           </button>
@@ -539,14 +566,9 @@ function App() {
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(mobileUrl)}`;
   const timeLeftSec = Math.ceil(timeLeftMs / 1000);
   const scoreGap = scoreA - scoreB;
-  // 점수 차이를 선형 오프셋으로 매핑해 A팀 우세(+gap)일 때 왼쪽으로 이동시키고,
-  // 과도하게 치우치지 않도록 최대 이동 범위를 제한한다.
   const maxOffset = 40;
   const sensitivity = 500;
-  const uiOffset = Math.max(
-    -maxOffset,
-    Math.min(maxOffset, (scoreGap / sensitivity) * maxOffset)
-  );
+  const uiOffset = Math.max(-maxOffset, Math.min(maxOffset, (scoreGap / sensitivity) * maxOffset));
 
   return (
     <div className="container game">
@@ -572,7 +594,9 @@ function App() {
       {(phase === 'waiting' || phase === 'countdown' || phase === 'playing') && (
         <div className="status-bar">
           <span>모드: {roomMode === 'team' ? '팀전' : '2인'}</span>
-          <span>준비 완료: {readyCount}/{playerCount}</span>
+          <span>
+            준비 완료: {readyCount}/{playerCount}
+          </span>
           <span className={fever ? 'fever-on' : ''}>
             남은 시간: {timeLeftSec}s {fever ? ' - FEVER!' : ''}
           </span>
@@ -611,7 +635,10 @@ function App() {
       {playerJudges.length > 0 && (
         <div className="judge-board">
           {playerJudges.map((entry) => (
-            <span key={`${entry.socketId}_${entry.at}`} className={`judge-badge ${entry.tone || 'good'}`}>
+            <span
+              key={`${entry.socketId}_${entry.at}`}
+              className={`judge-badge ${entry.tone || 'good'}`}
+            >
               {entry.team} - {entry.name}: {entry.judge}
             </span>
           ))}
@@ -625,7 +652,9 @@ function App() {
           <div className="qr-wrap">
             <img src={qrUrl} alt="room qr" />
           </div>
-          <p className="or-text">또는 방 코드 입력: <strong>{roomId}</strong></p>
+          <p className="or-text">
+            또는 방 코드 입력: <strong>{roomId}</strong>
+          </p>
           {canStart && (
             <button className="btn-primary" onClick={startGame}>
               게임 시작!
@@ -641,7 +670,9 @@ function App() {
           <div className="ready-list">
             {players.map((p) => (
               <div key={p.socketId} className={`ready-item ${p.ready ? 'ok' : ''}`}>
-                <span>{p.name} (Team {p.team})</span>
+                <span>
+                  {p.name} (Team {p.team})
+                </span>
                 <span>{p.ready ? '준비완료' : '준비중'}</span>
               </div>
             ))}
@@ -666,10 +697,7 @@ function App() {
             <div className="zone-center" />
             <div className="zone-b" />
           </div>
-          <div
-            className="rope-marker"
-            style={{ left: `${50 - uiOffset}%` }}
-          >
+          <div className="rope-marker" style={{ left: `${50 - uiOffset}%` }}>
             <div className="flag" />
             <div className="rope-line" />
           </div>
@@ -680,13 +708,14 @@ function App() {
         <div className="end-zone right">
           <span>B 승리</span>
         </div>
+
         {phase === 'playing' && (
           <div className="cheer-squad" aria-hidden="true">
             {cheerFans.map((fan) => (
               <div
                 key={fan.id}
                 className="cheer-fan"
-                style={{ left: fan.left, top: fan.top, '--fan-size': `${fan.size}px` }}
+                style={{ left: fan.left, top: fan.top, ['--fan-size' as any]: `${fan.size}px` }}
               >
                 {fan.message && (
                   <div
@@ -702,6 +731,7 @@ function App() {
             ))}
           </div>
         )}
+
         {phase === 'playing' && (
           <div className="sideline-cheer-layer" aria-hidden="true">
             {SIDELINE_CHEER_LAYOUT.map((fan) => (
@@ -710,9 +740,9 @@ function App() {
                 className={`sideline-cheer ${fan.side}`}
                 style={{
                   top: fan.top,
-                  '--sideline-delay': fan.delay,
-                  '--sideline-speed': `${fan.speed}s`,
-                  '--sideline-depth': fan.depth,
+                  ['--sideline-delay' as any]: fan.delay,
+                  ['--sideline-speed' as any]: `${fan.speed}s`,
+                  ['--sideline-depth' as any]: fan.depth,
                 }}
               >
                 <span className="sideline-hand left" />
@@ -726,17 +756,19 @@ function App() {
       {phase === 'result' && (
         <div className="result-overlay">
           <div className="result-card">
-            <h2 className="winner-text">
-              {winner === 'DRAW' ? '무승부!' : `TEAM ${winner} 승리!`}
-            </h2>
+            <h2 className="winner-text">{winner === 'DRAW' ? '무승부!' : `TEAM ${winner} 승리!`}</h2>
             <p className="hint">종료 사유: {endReason || 'normal'}</p>
-            <p className="hint">최종 점수 A:{scoreA} / B:{scoreB}</p>
-            <p className="hint">최고 콤보 A:{maxComboA} / B:{maxComboB}</p>
+            <p className="hint">
+              최종 점수 A:{scoreA} / B:{scoreB}
+            </p>
+            <p className="hint">
+              최고 콤보 A:{maxComboA} / B:{maxComboB}
+            </p>
             {winner !== 'DRAW' && (
               <div className="pc-fame-wrap">
                 <div className="pc-fame-col honor">
                   <p>명예의 전당 (승리팀)</p>
-                  <button className="btn-primary btn-small" onClick={() => openPcCapture('honor')}>
+                  <button className="btn-primary btn-small" onClick={() => openLiveCamera('honor')}>
                     {honorCameraOpen ? '카메라 다시 열기' : '명예 실시간 촬영'}
                   </button>
                   {honorCameraOpen && (
@@ -755,7 +787,7 @@ function App() {
                 </div>
                 <div className="pc-fame-col shame">
                   <p>불명예의 전당 (패배팀)</p>
-                  <button className="btn-primary btn-small" onClick={() => openPcCapture('shame')}>
+                  <button className="btn-primary btn-small" onClick={() => openLiveCamera('shame')}>
                     {shameCameraOpen ? '카메라 다시 열기' : '불명예 실시간 촬영'}
                   </button>
                   {shameCameraOpen && (
@@ -780,7 +812,9 @@ function App() {
                 {pcRecentFame.map((item) => (
                   <article key={item.id} className="pc-fame-recent-card">
                     <img src={item.imageDataUrl} alt={`${item.displayName} recent`} />
-                    <span>{item.type === 'honor' ? '명예' : '불명예'} - {item.displayName}</span>
+                    <span>
+                      {item.type === 'honor' ? '명예' : '불명예'} - {item.displayName}
+                    </span>
                   </article>
                 ))}
               </div>
@@ -816,3 +850,4 @@ function App() {
 }
 
 export default App;
+
